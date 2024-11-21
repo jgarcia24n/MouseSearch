@@ -1,12 +1,27 @@
-from flask import Flask, request, render_template, Response
+from flask import Flask, request, render_template, Response, json
 import requests
 import math
 
 app = Flask(__name__)
 
-# Replace with your API base URL and session cookie
+# Base API URL
 API_URL = "https://www.myanonamouse.net/tor/js/loadSearchJSONbasic.php"
-COOKIE = {"Cookie": "mam_id=qiII%2Bg%2F%2Bdacp94FgTI%2Focf3SMGJfuFOAwx82xtvwjc2MzgOBsy%2FFVvVENrv0of6KwsZmTJBbImP700x10AHbxzIsfVE8XWfKhDd5Q%2BODYwkHgWVdoL%2FfzdYmjxqloxySXhTUNe2iy4n9NEqVAOHxldo1TPR56B5JHon0qQezJ85e341n2ndN5VKjte2P0ckq4rM9CenKbSGRIWOvBMgqmREx%2BXsTAc7UnljkA8HDapuROi5c9xQb3WB8%2B2%2Bo%2BQSsmDlXPUa3LDmpN8xPQo%2BLaVWmXzGg%2FvMNhVLZ"}
+
+# Initial session cookie (replace with your actual values)
+session_cookies = {
+    "mam_id": "_zXN0MpPPSXWWgMlJ0YLHvPUq9FRh56DRrciTUY908x85dl--29svP04D2mYQuAVDYj8IMWJMRF8ZUrHL9EWUHf5K96jotpO4Oirre13mhtWRS3iVJzXXp4AwgIuQ3r4uXIkNF56Rkffep9deKOGMMouNQqEaNGC_unaDHNj-utOM8uLPxVJtnXhNvIKdFoBaZuIPK-s9N_ZVwopt-dcRpdnhpQcxXx5K7zQVDq9PXuuU6kuXW8SDeLYkn2UvfgyYZwC4Hxgy1IcK8D6Ze1sYmgmkKSfVjCgwmEH",
+    "uid": "221118",
+}
+
+
+def update_cookies(response):
+    """Extract and update cookies from the API response."""
+    global session_cookies
+    if "set-cookie" in response.headers:
+        # Parse and update the cookies
+        cookies = response.cookies.get_dict()
+        session_cookies.update(cookies)
+
 
 @app.route("/", methods=["GET", "POST"])
 def search():
@@ -26,7 +41,7 @@ def search():
         "tor[sortType]": "default",
         "tor[startNumber]": start_number,
         "perpage": per_page,
-        "thumbnail": "true",
+        "thumbnail": "true",  # Always include thumbnails
     }
 
     # Add search_in parameters
@@ -36,16 +51,29 @@ def search():
 
     # Add media type filter
     if media_type != "all":
-        params["main_cat[]"] = media_type
+        params["tor[main_cat][]"] = media_type
+
+    # Prepare headers with cookies
+    headers = {
+        "Cookie": "; ".join([f"{k}={v}" for k, v in session_cookies.items()])
+    }
 
     # Make API request
     if search_query:
-        response = requests.get(API_URL, headers=COOKIE, params=params)
+        response = requests.get(API_URL, headers=headers, params=params)
+        
+        # Update cookies from the API response
+        update_cookies(response)
+        
         if response.status_code == 200:
             results = response.json()
             total_results = results.get("total", 0)
             total_pages = math.ceil(total_results / per_page)
             data = results.get("data", [])
+
+            # Parse and clean author_info for each result
+            for item in data:
+                item["author_info"] = parse_author_info(item.get("author_info", ""))
         else:
             total_results = 0
             total_pages = 0
@@ -67,14 +95,27 @@ def search():
         total_pages=total_pages,
     )
 
+def parse_author_info(author_info):
+    """Extract and return only the author's names from author_info."""
+    try:
+        # Convert the JSON string into a Python dictionary
+        authors = json.loads(author_info)
+        # Join all author names into a single string (e.g., "Author1, Author2")
+        return ", ".join(authors.values())
+    except (json.JSONDecodeError, TypeError):
+        # If parsing fails or the field is empty, return "Unknown Author"
+        return "Unknown Author"
+
 @app.route("/proxy_thumbnail")
 def proxy_thumbnail():
+    """Proxy thumbnails to bypass cookie or CORS issues."""
     url = request.args.get("url")
     if not url:
         return "No URL provided", 400
-    headers = COOKIE
+    headers = {"Cookie": "; ".join([f"{k}={v}" for k, v in session_cookies.items()])}
     response = requests.get(url, headers=headers, stream=True)
     return Response(response.content, content_type=response.headers.get("Content-Type"))
+
 
 if __name__ == "__main__":
     app.run(debug=True)
