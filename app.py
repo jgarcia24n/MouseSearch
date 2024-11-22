@@ -1,5 +1,5 @@
 from flask import Flask, request, render_template, Response
-import requests, json
+import requests, json, argparse
 import math
 from datetime import datetime
 
@@ -227,4 +227,10 @@ def add_to_qbittorrent():
         return {"error": "Failed to add torrent to qBittorrent"}, 500
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    parser = argparse.ArgumentParser(description="Run the Flask app with custom address and port.")
+    parser.add_argument("--host", default="127.0.0.1", help="Host address to bind to (default: 127.0.0.1)")
+    parser.add_argument("--port", default=5000, type=int, help="Port number to bind to (default: 5000)")
+    args = parser.parse_args()
+
+    # Run the app with specified host and port
+    app.run(host=args.host, port=args.port, debug=True)
