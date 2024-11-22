@@ -1,5 +1,5 @@
 from flask import Flask, request, render_template, Response
-import requests, json
+import requests, json, argparse
 import math
 
 app = Flask(__name__)
@@ -181,4 +181,10 @@ def proxy_thumbnail():
     return Response(response.content, content_type=response.headers.get("Content-Type"))
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    parser = argparse.ArgumentParser(description="Run the Flask app with custom address and port.")
+    parser.add_argument("--host", default="127.0.0.1", help="Host address to bind to (default: 127.0.0.1)")
+    parser.add_argument("--port", default=5000, type=int, help="Port number to bind to (default: 5000)")
+    args = parser.parse_args()
+
+    # Run the app with specified host and port
+    app.run(host=args.host, port=args.port, debug=True)
