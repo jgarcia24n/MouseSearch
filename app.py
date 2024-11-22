@@ -1,6 +1,7 @@
 from flask import Flask, request, render_template, Response
 import requests, json
 import math
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -145,6 +146,7 @@ def search():
             for item in data:
                 item["author_info"] = parse_author_info(item.get("author_info", ""))
                 item["narrator_info"] = parse_author_info(item.get("narrator_info", ""))
+                item["added"] = format_date(item.get("added", "Unknown"))
         else:
             total_results = 0
             total_pages = 0
@@ -174,7 +176,15 @@ def parse_author_info(info):
         return ", ".join(authors.values())
     except (json.JSONDecodeError, TypeError):
         return "Unknown"
-
+def format_date(date_string):
+    """Convert the API date string to YYYY-MM-DD format."""
+    try:
+        # Assuming the API returns the date in ISO 8601 format or similar
+        date_object = datetime.strptime(date_string, "%Y-%m-%d %H:%M:%S")  # Adjust if needed
+        return date_object.strftime("%Y-%m-%d")
+    except (ValueError, TypeError):
+        return "Unknown"
+    
 @app.route("/proxy_thumbnail")
 def proxy_thumbnail():
     """Proxy thumbnails to handle cookies and bypass CORS issues."""

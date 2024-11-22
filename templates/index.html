@@ -5,6 +5,35 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MyAnonamouse Search</title>
     <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='style.css') }}">
+
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            const forms = document.querySelectorAll("form[action='/add_to_qbittorrent']");
+    
+            forms.forEach((form) => {
+                form.addEventListener("submit", function (event) {
+                    event.preventDefault(); // Prevent the default form submission
+                    const formData = new FormData(form);
+    
+                    fetch("/add_to_qbittorrent", {
+                        method: "POST",
+                        body: formData,
+                    })
+                        .then((response) => response.json())
+                        .then((data) => {
+                            if (data.success) {
+                                alert("Torrent added successfully!");
+                            } else {
+                                alert("Failed to add torrent: " + data.error);
+                            }
+                        })
+                        .catch((error) => {
+                            alert("An error occurred: " + error.message);
+                        });
+                });
+            });
+        });
+    </script>
 </head>
 <body>
     <div class="container">
@@ -59,7 +88,9 @@
                                     </a>
                                 </h3>
                                 <p>Author: {{ result.author_info | safe }}</p>
+                                <p>Narrator: {{ result.narrator_info | safe }}</p>
                                 <p>Size: {{ result.size }}</p>
+                                <p>Date: {{ result.added }}</p>
                                 <a href="https://www.myanonamouse.net/tor/download.php/{{ result.dl }}" target="_blank">Download .torrent</a>
                         
                                 <!-- Add to qBittorrent button -->
