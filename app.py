@@ -243,8 +243,10 @@ def rank_results(search_results):
     
     # Add scores to results
     for result in search_results:
-        result['score'] = calculate_score(result, max_seeders, max_normalized_downloads, newest_date)
-    
+        score_data = calculate_score(result, max_seeders, max_normalized_downloads, newest_date)
+        score_data['total_score'] = round(score_data['total_score'], 1)  # Round total_score to one decimal place
+        result['score'] = score_data
+        
     # Sort results by total_score (descending)
     ranked_results = sorted(search_results, key=lambda x: x['score']['total_score'], reverse=True)
     return ranked_results

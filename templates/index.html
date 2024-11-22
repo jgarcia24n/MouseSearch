@@ -7,9 +7,19 @@
     <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='style.css') }}">
 
     <script>
-        document.addEventListener("DOMContentLoaded", function () {
+            document.addEventListener("DOMContentLoaded", function () {
+                // Normalize search query on form submission
+                const searchForm = document.querySelector("form[action='/']");
+                searchForm.addEventListener("submit", function (event) {
+                    const queryInput = searchForm.querySelector("input[name='query']");
+                    if (queryInput) {
+                        // Normalize the query to lowercase
+                        queryInput.value = queryInput.value.trim().toLowerCase();
+                    }
+                });
+
+            
             const forms = document.querySelectorAll("form[action='/add_to_qbittorrent']");
-    
             forms.forEach((form) => {
                 form.addEventListener("submit", function (event) {
                     event.preventDefault(); // Prevent the default form submission
