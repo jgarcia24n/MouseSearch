@@ -1,22 +1,25 @@
 from flask import Flask, request, render_template, Response, make_response
-import requests, json, argparse
+import requests, json, argparse, os
 import math
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load .env file
+load_dotenv()
 
 app = Flask(__name__)
 
 # Base API URL
-API_URL = "https://www.myanonamouse.net/tor/js/loadSearchJSONbasic.php"
-
+API_URL = os.getenv("MAM_API_URL", "https://www.myanonamouse.net/tor/js/loadSearchJSONbasic.php")
 # Session cookies
 session_cookies = {
-    "mam_id": "_zXN0MpPPSXWWgMlJ0YLHvPUq9FRh56DRrciTUY908x85dl--29svP04D2mYQuAVDYj8IMWJMRF8ZUrHL9EWUHf5K96jotpO4Oirre13mhtWRS3iVJzXXp4AwgIuQ3r4uXIkNF56Rkffep9deKOGMMouNQqEaNGC_unaDHNj-utOM8uLPxVJtnXhNvIKdFoBaZuIPK-s9N_ZVwopt-dcRpdnhpQcxXx5K7zQVDq9PXuuU6kuXW8SDeLYkn2UvfgyYZwC4Hxgy1IcK8D6Ze1sYmgmkKSfVjCgwmEH",
-    "uid": "221118",
+    "mam_id": os.getenv("MAM_ID", ""),
+    "uid": os.getenv("MAM_UID", ""),
 }
 
-QB_URL = "http://192.168.4.73:6767"  # qBittorrent Web UI URL
-QB_USERNAME = "admin"  # Replace with your username
-QB_PASSWORD = "Emulation5!"  # Replace with your password
+QB_URL = os.getenv("QB_URL", "http://localhost:8080")  # Replace with your qBittorrent URL, e.g., "http://localhost:8080"
+QB_USERNAME = os.getenv("QB_USERNAME", "username")
+QB_PASSWORD = os.getenv("QB_PASSWORD", "password")
 
 language_dict = {
     "English": 1,
@@ -246,7 +249,7 @@ def rank_results(search_results):
         score_data = calculate_score(result, max_seeders, max_normalized_downloads, newest_date)
         score_data['total_score'] = round(score_data['total_score'], 1)  # Round total_score to one decimal place
         result['score'] = score_data
-        
+
     # Sort results by total_score (descending)
     ranked_results = sorted(search_results, key=lambda x: x['score']['total_score'], reverse=True)
     return ranked_results
