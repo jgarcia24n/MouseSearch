@@ -32,6 +32,23 @@ def update_cookies(response):
 
 @app.route("/", methods=["GET", "POST"])
 def search():
+        # Fetch available categories from qBittorrent
+    session = requests.Session()
+    login_response = session.post(f"{QB_URL}/api/v2/auth/login", data={
+        "username": QB_USERNAME,
+        "password": QB_PASSWORD
+    })
+
+    if login_response.status_code == 200 and login_response.text == "Ok.":
+        categories_response = session.get(f"{QB_URL}/api/v2/sync/maindata?rid=0")
+        if categories_response.status_code == 200:
+            categories = categories_response.json().get("categories", {})
+        else:
+            categories = {}
+    else:
+        categories = {}
+
+
     # Get search parameters
     search_query = request.args.get("query", "")
     search_in_title = request.args.get("search_in_title", "off") == "on"
@@ -109,6 +126,7 @@ def search():
         results=data,
         page=page,
         total_pages=total_pages,
+        categories=categories,
     ))
 
     # Set Cache-Control header for 1 day (86400 seconds)
@@ -273,6 +291,32 @@ def add_to_qbittorrent():
         return {"success": "Torrent added successfully"}
     else:
         return {"error": "Failed to add torrent to qBittorrent"}, 500
+
+@app.route("/get_categories", methods=["GET"])
+def get_categories():
+    """Fetch all available categories from qBittorrent."""
+    # Authenticate with qBittorrent
+    session = requests.Session()
+    login_response = session.post(f"{QB_URL}/api/v2/auth/login", data={
+        "username": QB_USERNAME,
+        "password": QB_PASSWORD
+    })
+
+    if login_response.status_code != 200 or login_response.text != "Ok.":
+        return {"error": "Failed to authenticate with qBittorrent"}, 500
+
+    # Fetch categories
+    categories_response = session.get(f"{QB_URL}/api/v2/sync/maindata?rid=0")
+
+    if categories_response.status_code != 200:
+        return {"error": "Failed to fetch categories from qBittorrent"}, 500
+
+    # Extract categories
+    response_json = categories_response.json()
+    categories = response_json.get("categories", {})
+
+    # Return categories
+    return {"categories": categories}, 200
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the Flask app with custom address and port.")
