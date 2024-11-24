@@ -1,16 +1,16 @@
 {% for result in results %}
-<div class="d-flex text-body-secondary pt-3">
+<div class="row py-4 border-bottom">
+    <div class="col-6 col-md-4">
     <img 
-        class="flex-shrink-0 me-2 rounded"
+        class="img-fluid me-2 rounded"
         src="{{ url_for('proxy_thumbnail', url=result.thumbnail) }}" 
         alt="Thumbnail" 
-        width="25%"
-        height="25%" 
     >
-    <div class="pb-3 mb-0 small lh-sm border-bottom w-100">
+</div>
+    <div class="col-6 col-md-5 pb-3 mb-0 small lh-sm">
         <div class="d-flex justify-content-between">
             <strong class="text-gray-dark">{{ result.title }}</strong>
-            <a href="{{ result.dllink }}" class="btn btn-sm btn-primary">Add to qBittorrent</a>
+            
         </div>
         <span class="d-block">Narrator: {{ result.narrator_info or "Unknown" }}</span>
         <span class="d-block">File Type: {{ result.filetype }}</span>
@@ -19,5 +19,8 @@
         <span class="d-block">Seeders/Leechers: {{ result.seeders }}/{{ result.leechers }}</span>
         <span class="d-block">Total Score: {{ result.score.total_score }}</span>
     </div>
+    <div class="col-12 col-md-3 py-2">
+        <a href="{{ result.dllink }}" class="btn btn-primary d-grid gap-2 d-md-block">Add to qBittorrent</a>
+        </div>
 </div>
 {% endfor %}
