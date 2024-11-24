@@ -171,73 +171,59 @@
 <main class="container">
     <div class="d-flex justify-content-center align-items-center p-3 my-3 text-white bg-purple rounded shadow-sm">
         <div class="lh-1 text-center">
-          <h1 class="h6 mb-0 text-white lh-1">MyAnonamouse Search</h1>
+          <h1 class="h1 mb-0 text-white lh-1">MyAnonamouse Search</h1>
         </div>
       </div>
 
   <div class="my-3 p-3 bg-body rounded shadow-sm">
-    <h6 class="border-bottom pb-2 mb-0">Search</h6>
-    <div class="d-flex text-body-secondary pt-3">
-      <svg class="bd-placeholder-img flex-shrink-0 me-2 rounded" width="32" height="32" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Placeholder: 32x32" preserveAspectRatio="xMidYMid slice" focusable="false"><title>Placeholder</title><rect width="100%" height="100%" fill="#007bff"></rect><text x="50%" y="50%" fill="#007bff" dy=".3em">32x32</text></svg>
-      <p class="pb-3 mb-0 small lh-sm border-bottom">
-        <strong class="d-block text-gray-dark">@username</strong>
-        Some representative placeholder content, with some information about this user. Imagine this being some sort of status update, perhaps?
-      </p>
-    </div>
-    <div class="d-flex text-body-secondary pt-3">
-      <svg class="bd-placeholder-img flex-shrink-0 me-2 rounded" width="32" height="32" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Placeholder: 32x32" preserveAspectRatio="xMidYMid slice" focusable="false"><title>Placeholder</title><rect width="100%" height="100%" fill="#e83e8c"></rect><text x="50%" y="50%" fill="#e83e8c" dy=".3em">32x32</text></svg>
-      <p class="pb-3 mb-0 small lh-sm border-bottom">
-        <strong class="d-block text-gray-dark">@username</strong>
-        Some more representative placeholder content, related to this other user. Another status update, perhaps.
-      </p>
-    </div>
-    <div class="d-flex text-body-secondary pt-3">
-      <svg class="bd-placeholder-img flex-shrink-0 me-2 rounded" width="32" height="32" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Placeholder: 32x32" preserveAspectRatio="xMidYMid slice" focusable="false"><title>Placeholder</title><rect width="100%" height="100%" fill="#6f42c1"></rect><text x="50%" y="50%" fill="#6f42c1" dy=".3em">32x32</text></svg>
-      <p class="pb-3 mb-0 small lh-sm border-bottom">
-        <strong class="d-block text-gray-dark">@username</strong>
-        This user also gets some representative placeholder content. Maybe they did something interesting, and you really want to highlight this in the recent updates.
-      </p>
-    </div>
-    <small class="d-block text-end mt-3">
-      <a href="#">All updates</a>
-    </small>
+    <main class="">
+        <form id="search-form" method="GET">
+          <h1 class="h3 mb-3 fw-normal"></h1>
+      
+          <div class="form-floating">
+            <input type="text" class="form-control" id="query" name="query" placeholder="The Great Gatsby F. Scott Fitzgerald">
+            <label for="query">Search...</label>
+          </div>
+          <div>
+            <div class="form-check form-check-inline text-start my-3">
+                <input class="form-check-input" name="search_in_title" type="checkbox" id="search_in_title">
+                <label class="form-check-label" for="search_in_title">
+                Title
+                </label>
+            </div>
+            <div class="form-check form-check-inline text-start my-3">
+                <input class="form-check-input" name="search_in_author"type="checkbox" id="search_in_author">
+                <label class="form-check-label" for="search_in_author">
+                Author
+                </label>
+            </div>
+            <div class="form-check form-check-inline text-start my-3">
+                <input class="form-check-input" name="search_in_narrator" type="checkbox" id="search_in_narrator">
+                <label class="form-check-label" for="search_in_narrator">
+                Narrator
+                </label>
+            </div>
+        </div>
+        <div class="mb-3 form-floating">
+            <select class="form-select" name="media_type" id="media_type" aria-label="Media type">
+              <option value="13" selected>Audiobooks</option>
+              <option value="14">E-Books</option>
+              <option value="15">Musicology</option>
+              <option value="16">Radio</option>
+              <option value="all">All</option>
+            </select>
+            <label for="media_type">Media type</label>
+        </div>
+          <button class="btn btn-primary w-100 py-2" type="submit">Search</button>
+        </form>
+      </main>
   </div>
 
   <div class="my-3 p-3 bg-body rounded shadow-sm">
     <h6 class="border-bottom pb-2 mb-0">Results</h6>
-    <div class="d-flex text-body-secondary pt-3">
-      <svg class="bd-placeholder-img flex-shrink-0 me-2 rounded" width="32" height="32" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Placeholder: 32x32" preserveAspectRatio="xMidYMid slice" focusable="false"><title>Placeholder</title><rect width="100%" height="100%" fill="#007bff"></rect><text x="50%" y="50%" fill="#007bff" dy=".3em">32x32</text></svg>
-      <div class="pb-3 mb-0 small lh-sm border-bottom w-100">
-        <div class="d-flex justify-content-between">
-          <strong class="text-gray-dark">Full Name</strong>
-          <a href="#">Follow</a>
-        </div>
-        <span class="d-block">@username</span>
-      </div>
+    <div id="results-container">
+        <!-- Results will be dynamically loaded here -->
     </div>
-    <div class="d-flex text-body-secondary pt-3">
-      <svg class="bd-placeholder-img flex-shrink-0 me-2 rounded" width="32" height="32" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Placeholder: 32x32" preserveAspectRatio="xMidYMid slice" focusable="false"><title>Placeholder</title><rect width="100%" height="100%" fill="#007bff"></rect><text x="50%" y="50%" fill="#007bff" dy=".3em">32x32</text></svg>
-      <div class="pb-3 mb-0 small lh-sm border-bottom w-100">
-        <div class="d-flex justify-content-between">
-          <strong class="text-gray-dark">Full Name</strong>
-          <a href="#">Follow</a>
-        </div>
-        <span class="d-block">@username</span>
-      </div>
-    </div>
-    <div class="d-flex text-body-secondary pt-3">
-      <svg class="bd-placeholder-img flex-shrink-0 me-2 rounded" width="32" height="32" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Placeholder: 32x32" preserveAspectRatio="xMidYMid slice" focusable="false"><title>Placeholder</title><rect width="100%" height="100%" fill="#007bff"></rect><text x="50%" y="50%" fill="#007bff" dy=".3em">32x32</text></svg>
-      <div class="pb-3 mb-0 small lh-sm border-bottom w-100">
-        <div class="d-flex justify-content-between">
-          <strong class="text-gray-dark">Full Name</strong>
-          <a href="#">Follow</a>
-        </div>
-        <span class="d-block">@username</span>
-      </div>
-    </div>
-    <small class="d-block text-end mt-3">
-      <a href="#">All suggestions</a>
-    </small>
   </div>
 </main>
 <!-- New Settings Offcanvas -->
@@ -252,60 +238,124 @@ aria-labelledby="settingsOffcanvasLabel"
         <button type="button" class="btn-close text-reset" data-bs-dismiss="offcanvas" aria-label="Close"></button>
     </div>
     <div class="offcanvas-body">
-        <form id="settings-form" method="POST" action="/update_settings">
+        <form id="settings-form">
             <h5 class="text-center border-bottom pb-2 mb-0">qBittorrent</h5>
             <div class="mb-3">
-            <label for="qb_url" class="form-label">qBittorrent URL</label>
-            <input
-                type="text"
-                class="form-control"
-                id="qb_url"
-                name="qb_url"
-                value="{{ qb_url }}"
-                required
-            />
+                <label for="QB_URL" class="form-label">qBittorrent URL</label>
+                <input
+                    type="text"
+                    class="form-control"
+                    id="QB_URL"
+                    name="QB_URL"
+                    value="{{ QB_URL }}"
+                    required
+                />
             </div>
             <div class="mb-3">
-            <label for="qb_username" class="form-label">Username</label>
-            <input
-                type="text"
-                class="form-control"
-                id="qb_username"
-                name="qb_username"
-                value="{{ qb_username }}"
-                required
-            />
+                <label for="QB_USERNAME" class="form-label">Username</label>
+                <input
+                    type="text"
+                    class="form-control"
+                    id="QB_USERNAME"
+                    name="QB_USERNAME"
+                    value="{{ QB_USERNAME }}"
+                    required
+                />
             </div>
             <div class="mb-3">
-            <label for="qb_password" class="form-label">Password</label>
-            <input
-                type="password"
-                class="form-control"
-                id="qb_password"
-                name="qb_password"
-                value="{{ qb_password }}"
-                required
-            />
+                <label for="QB_PASSWORD" class="form-label">Password</label>
+                <input
+                    type="password"
+                    class="form-control"
+                    id="QB_PASSWORD"
+                    name="QB_PASSWORD"
+                    value="{{ QB_PASSWORD }}"
+                    required
+                />
             </div>
-
+    
             <h5 class="text-center border-bottom pb-2">MyAnonamouse</h5>
             <div class="mb-3">
-            <label for="mam_id" class="form-label">MAM ID</label>
-            <input
-                type="text"
-                class="form-control"
-                id="mam_id"
-                name="mam_id"
-                value="{{ mam_id }}"
-                required
-            />
+                <label for="MAM_ID" class="form-label">MAM ID</label>
+                <input
+                    type="text"
+                    class="form-control"
+                    id="MAM_ID"
+                    name="MAM_ID"
+                    value="{{ MAM_ID }}"
+                    required
+                />
             </div>
-
-            <button type="submit" class="btn btn-primary">Save Settings</button>
+    
+            <button type="button" class="btn btn-primary" id="save-settings-button">Save Settings</button>
         </form>
+        <div id="response-message" class="mt-3"></div>
     </div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/js/bootstrap.bundle.min.js" integrity="sha512-7Pi/otdlbbCR+LnW+F7PwFcSDJOuUJB3OxtEHbg4vSMvzvJjde4Po1v4BR9Gdc9aXNUNFVUY+SK51wWT8WF0Gg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="{{ url_for('static', filename='offcanvas-navbar.js') }}"></script>
+
+<script>
+    document.getElementById('save-settings-button').addEventListener('click', function () {
+        const form = document.getElementById('settings-form');
+        const formData = new FormData(form);
+
+        fetch('/update_settings', {
+            method: 'POST',
+            body: formData,
+        })
+        .then(response => response.json())
+        .then(data => {
+            const messageDiv = document.getElementById('response-message');
+            if (data.status === 'success') {
+                messageDiv.innerHTML = '<div class="alert alert-success">' + data.message + '</div>';
+            } else {
+                messageDiv.innerHTML = '<div class="alert alert-danger">Failed to save settings. Please try again.</div>';
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            const messageDiv = document.getElementById('response-message');
+            messageDiv.innerHTML = '<div class="alert alert-danger">An error occurred while saving settings.</div>';
+        });
+    });
+</script>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        const searchForm = document.getElementById("search-form");
+        const resultsContainer = document.getElementById("results-container");
+
+        searchForm.addEventListener("submit", function(e) {
+            e.preventDefault(); // Prevent the default form submission
+
+            // Collect form data
+            const formData = new FormData(searchForm);
+            const queryParams = new URLSearchParams(formData).toString();
+            console.log(formData)
+            console.log(queryParams)
+            // Send AJAX request
+            fetch("/?"+queryParams, {
+                method: "GET",
+                headers: {
+                    "X-Requested-With": "XMLHttpRequest" // Optional for identifying AJAX requests
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error("Network response was not ok");
+                }
+                return response.text(); // Get response HTML
+            })
+            .then(html => {
+                // Update the results container
+                resultsContainer.innerHTML = html;
+            })
+            .catch(error => {
+                console.error("Error during AJAX request:", error);
+            });
+        });
+    });
+</script>
 
 </body></html>

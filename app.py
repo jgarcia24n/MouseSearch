@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, Response, make_response
+from flask import Flask, request, render_template, Response, make_response, jsonify
 import requests, json, argparse, os
 import math
 from datetime import datetime
@@ -12,16 +12,21 @@ app = Flask(__name__)
 load_dotenv()
 
 # Base API URL
-API_URL = os.getenv("MAM_API_URL", "https://www.myanonamouse.net/tor/js/loadSearchJSONbasic.php")
+app.config["API_URL"] = os.getenv("MAM_API_URL", "https://www.myanonamouse.net/tor/js/loadSearchJSONbasic.php")
+
+
+
+app.config["QB_URL"] = os.getenv("QB_URL", "http://localhost:8080")  # Default example
+app.config["QB_USERNAME"] = os.getenv("QB_USERNAME", "admin")
+app.config["QB_PASSWORD"] = os.getenv("QB_PASSWORD", "")
+app.config["MAM_ID"] = os.getenv("MAM_ID", "")
+app.config["MAM_UID"] = os.getenv("MAM_UID", "")
+
 
 session_cookies = {
-    "mam_id": os.getenv("MAM_ID", ""),
-    "uid": os.getenv("MAM_UID", ""),
+    "mam_id": app.config["MAM_ID"],
+    "uid": app.config["MAM_UID"],
 }
-
-QB_URL = os.getenv("QB_URL", "http://localhost:8080")  # Replace with your qBittorrent URL, e.g., "http://localhost:8080"
-QB_USERNAME = os.getenv("QB_USERNAME", "admin")
-QB_PASSWORD = os.getenv("QB_PASSWORD", "adminadmin")
 
 def update_cookies(response):
     """Extract and update cookies from the API response."""
@@ -76,7 +81,7 @@ def search():
     }
 
     if search_query:
-        response = requests.get(API_URL, headers=headers, params=params)
+        response = requests.get(app.config["API_URL"], headers=headers, params=params)
         categories = get_categories()
         # Update cookies
         update_cookies(response)
@@ -104,6 +109,14 @@ def search():
         total_pages = 0
         data = []
 
+        # Check if the request is an AJAX request
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return render_template(
+            "partials/results.html",  # Create a partial template for the results
+            results=data,
+            categories=categories
+        )
+    
     response = make_response(render_template(
         "index.html",
         query=search_query,
@@ -116,6 +129,11 @@ def search():
         page=page,
         total_pages=total_pages,
         categories=categories,
+        QB_URL=app.config["QB_URL"],
+        QB_USERNAME=app.config["QB_USERNAME"],
+        QB_PASSWORD="",
+        MAM_ID=app.config["MAM_ID"],
+        MAM_UID=app.config["MAM_UID"],
     ))
 
     # Set Cache-Control header for 1 day (86400 seconds)
@@ -202,9 +220,9 @@ def check_existing_torrents(search_results):
     """Check if torrents from the API results are already in qBittorrent."""
     # Authenticate with qBittorrent
     session = requests.Session()
-    login_response = session.post(f"{QB_URL}/api/v2/auth/login", data={
-        "username": QB_USERNAME,
-        "password": QB_PASSWORD
+    login_response = session.post(f"{app.config["QB_URL"]}/api/v2/auth/login", data={
+        "username": app.config["QB_USERNAME"],
+        "password": app.config["QB_PASSWORD"]
     })
 
     if login_response.status_code != 200 or login_response.text != "Ok.":
@@ -217,7 +235,7 @@ def check_existing_torrents(search_results):
 
     # Query qBittorrent for these hashes
     hash_filter = "|".join(hashes)  # Join hashes with "|" as required by the API
-    torrents_response = session.get(f"{QB_URL}/api/v2/torrents/info", params={"hashes": hash_filter})
+    torrents_response = session.get(f"{app.config["QB_URL"]}/api/v2/torrents/info", params={"hashes": hash_filter})
 
     if torrents_response.status_code != 200:
         raise Exception("Failed to fetch filtered torrents from qBittorrent")
@@ -259,9 +277,9 @@ def add_to_qbittorrent():
         return {"error": "No torrent URL provided"}, 400
 
     session = requests.Session()
-    login_response = session.post(f"{QB_URL}/api/v2/auth/login", data={
-        "username": QB_USERNAME,
-        "password": QB_PASSWORD
+    login_response = session.post(f"{app.config["QB_URL"]}/api/v2/auth/login", data={
+        "username": app.config["QB_USERNAME"],
+        "password": app.config["QB_PASSWORD"]
     })
 
     if login_response.status_code != 200 or login_response.text != "Ok.":
@@ -275,7 +293,7 @@ def add_to_qbittorrent():
     if category:  # Include category if provided
         add_data["category"] = category
 
-    add_response = session.post(f"{QB_URL}/api/v2/torrents/add", data=add_data)
+    add_response = session.post(f"{app.config["QB_URL"]}/api/v2/torrents/add", data=add_data)
 
     if add_response.status_code == 200:
         return {"success": "Torrent added successfully"}
@@ -285,15 +303,15 @@ def add_to_qbittorrent():
 
 def get_categories():
     session = requests.Session()
-    login_response = session.post(f"{QB_URL}/api/v2/auth/login", data={
-        "username": QB_USERNAME,
-        "password": QB_PASSWORD
+    login_response = session.post(f"{app.config["QB_URL"]}/api/v2/auth/login", data={
+        "username": app.config["QB_USERNAME"],
+        "password": app.config["QB_PASSWORD"]
     })
 
     categories = {}  # Default to an empty dictionary
 
     if login_response.status_code == 200 and login_response.text == "Ok.":
-        categories_response = session.get(f"{QB_URL}/api/v2/sync/maindata?rid=0")
+        categories_response = session.get(f"{app.config["QB_URL"]}/api/v2/sync/maindata?rid=0")
         if categories_response.status_code == 200:
             try:
                 # Extract categories
@@ -310,6 +328,27 @@ def get_categories():
 
     return categories 
 
+@app.route("/update_settings", methods=["POST"])
+def update_settings():
+    app.config["QB_URL"] = request.form.get("QB_URL", app.config["QB_URL"])
+    app.config["QB_USERNAME"] = request.form.get("QB_USERNAME", app.config["QB_USERNAME"])
+    
+    # Update password only if not blank
+    qb_password = request.form.get("QB_PASSWORD")
+    if qb_password:  # Only update if QB_PASSWORD is not empty or None
+        app.config["QB_PASSWORD"] = qb_password
+
+    app.config["MAM_ID"] = request.form.get("MAM_ID", app.config["MAM_ID"])
+
+    # (Optional) Save back to .env (if needed)
+    # Uncomment this if saving to .env is required
+    # with open('.env', 'w') as f:
+    #     f.write(f"QB_URL={app.config['QB_URL']}\n")
+    #     f.write(f"QB_USERNAME={app.config['QB_USERNAME']}\n")
+    #     f.write(f"QB_PASSWORD={app.config['QB_PASSWORD']}\n")
+    #     f.write(f"MAM_ID={app.config['MAM_ID']}\n")
+
+    return jsonify({"status": "success", "message": "Settings updated successfully!"})
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the Flask app with custom address and port.")
