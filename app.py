@@ -10,6 +10,7 @@ app = Flask(__name__)
 
 # Load .env file
 load_dotenv()
+print(f"QB_URL from .env: {os.getenv('QB_URL')}")
 
 # Base API URL
 app.config["API_URL"] = os.getenv("MAM_API_URL", "https://www.myanonamouse.net/tor/js/loadSearchJSONbasic.php")
@@ -22,6 +23,10 @@ app.config["QB_PASSWORD"] = os.getenv("QB_PASSWORD", "")
 app.config["MAM_ID"] = os.getenv("MAM_ID", "")
 app.config["MAM_UID"] = os.getenv("MAM_UID", "")
 
+app.config['BASE_HEADERS'] = {
+    "CF-Access-Client-Id": os.environ.get("CFAccessClientId"),
+    "CF-Access-Client-Secret": os.environ.get("CFAccessClientSecret")
+}
 
 session_cookies = {
     "mam_id": app.config["MAM_ID"],
@@ -223,7 +228,7 @@ def check_existing_torrents(search_results):
     login_response = session.post(f"{app.config["QB_URL"]}/api/v2/auth/login", data={
         "username": app.config["QB_USERNAME"],
         "password": app.config["QB_PASSWORD"]
-    })
+    },headers=app.config['BASE_HEADERS'])
 
     if login_response.status_code != 200 or login_response.text != "Ok.":
         raise Exception("Failed to authenticate with qBittorrent")
@@ -280,7 +285,9 @@ def add_to_qbittorrent():
     login_response = session.post(f"{app.config["QB_URL"]}/api/v2/auth/login", data={
         "username": app.config["QB_USERNAME"],
         "password": app.config["QB_PASSWORD"]
-    })
+    },
+    headers=app.config['BASE_HEADERS']
+    )
 
     if login_response.status_code != 200 or login_response.text != "Ok.":
         return {"error": "Failed to authenticate with qBittorrent"}, 500
@@ -293,7 +300,7 @@ def add_to_qbittorrent():
     if category:  # Include category if provided
         add_data["category"] = category
 
-    add_response = session.post(f"{app.config["QB_URL"]}/api/v2/torrents/add", data=add_data)
+    add_response = session.post(f"{app.config["QB_URL"]}/api/v2/torrents/add", data=add_data, headers=app.config['BASE_HEADERS'])
 
     if add_response.status_code == 200:
         return {"success": "Torrent added successfully"}
@@ -303,15 +310,18 @@ def add_to_qbittorrent():
 
 def get_categories():
     session = requests.Session()
+
     login_response = session.post(f"{app.config["QB_URL"]}/api/v2/auth/login", data={
         "username": app.config["QB_USERNAME"],
-        "password": app.config["QB_PASSWORD"]
-    })
+        "password": app.config["QB_PASSWORD"],
+        },
+        headers=app.config['BASE_HEADERS']
+        )
 
     categories = {}  # Default to an empty dictionary
 
     if login_response.status_code == 200 and login_response.text == "Ok.":
-        categories_response = session.get(f"{app.config["QB_URL"]}/api/v2/sync/maindata?rid=0")
+        categories_response = session.get(f"{app.config["QB_URL"]}/api/v2/sync/maindata?rid=0",headers=app.config['BASE_HEADERS'])
         if categories_response.status_code == 200:
             try:
                 # Extract categories

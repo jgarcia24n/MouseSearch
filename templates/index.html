@@ -1,4 +1,4 @@
-<html lang="en" data-bs-theme="dark"><head><script src="safari-web-extension://1ED3B8A5-C046-4B33-A5AC-8256EACEC9D3/content/fido2-page-script.js"></script><script src="https://getbootstrap.com/docs/5.3/assets/js/color-modes.js"></script>
+<html lang="en" data-bs-theme="dark"><head><script src="https://getbootstrap.com/docs/5.3/assets/js/color-modes.js"></script>
 
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -13,7 +13,8 @@
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@docsearch/css@3">
 
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" integrity="sha512-jnSuA4Ss2PkkikSOLtYs8BlYIeeIK1h99ty4YfvRPAlzr377vr3CXDb7sb7eEEBYjDtcYj+AjBH3FLv5uSJuXg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <link rel="stylesheet" href="static/bootstrap/css/bootstrap.min.css"/>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 
     <!-- Favicons -->
 <link rel="apple-touch-icon" href="https://getbootstrap.com/docs/5.3/assets/img/favicons/apple-touch-icon.png" sizes="180x180">
@@ -186,13 +187,13 @@
           </div>
           <div>
             <div class="form-check form-check-inline text-start my-3">
-                <input class="form-check-input" name="search_in_title" type="checkbox" id="search_in_title">
+                <input class="form-check-input" name="search_in_title" type="checkbox" id="search_in_title" checked>
                 <label class="form-check-label" for="search_in_title">
                 Title
                 </label>
             </div>
             <div class="form-check form-check-inline text-start my-3">
-                <input class="form-check-input" name="search_in_author"type="checkbox" id="search_in_author">
+                <input class="form-check-input" name="search_in_author"type="checkbox" id="search_in_author" checked>
                 <label class="form-check-label" for="search_in_author">
                 Author
                 </label>
@@ -214,8 +215,15 @@
             </select>
             <label for="media_type">Media type</label>
         </div>
-          <button class="btn btn-primary w-100 py-2" type="submit">Search</button>
+          <button class="btn btn-primary w-100 py-2" id="searchButton" type="submit">Search</button>
         </form>
+        <!-- 
+          <div id="spinner" class="d-flex justify-content-center my-3 d-none">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+        </div>
+      -->
       </main>
   </div>
 
@@ -292,7 +300,7 @@ aria-labelledby="settingsOffcanvasLabel"
         <div id="response-message" class="mt-3"></div>
     </div>
 </div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/js/bootstrap.bundle.min.js" integrity="sha512-7Pi/otdlbbCR+LnW+F7PwFcSDJOuUJB3OxtEHbg4vSMvzvJjde4Po1v4BR9Gdc9aXNUNFVUY+SK51wWT8WF0Gg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="static/bootstrap/js/bootstrap.bundle.min.js"></script>
 <script src="{{ url_for('static', filename='offcanvas-navbar.js') }}"></script>
 
 <script>
@@ -325,9 +333,21 @@ aria-labelledby="settingsOffcanvasLabel"
     document.addEventListener("DOMContentLoaded", function() {
         const searchForm = document.getElementById("search-form");
         const resultsContainer = document.getElementById("results-container");
+        //const spinner = document.getElementById("spinner"); // Ensure spinner is retrieved
+        const searchButton = document.getElementById("searchButton");
 
         searchForm.addEventListener("submit", function(e) {
             e.preventDefault(); // Prevent the default form submission
+
+            // Show the spinner by removing the 'd-none' class
+        //spinner.classList.remove("d-none");
+
+        // modify search button
+        searchButton.disabled = true; // Disable the button to prevent multiple clicks
+        searchButton.innerHTML = `
+          <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+          Searching...
+        `;
 
             // Collect form data
             const formData = new FormData(searchForm);
@@ -353,8 +373,20 @@ aria-labelledby="settingsOffcanvasLabel"
             })
             .catch(error => {
                 console.error("Error during AJAX request:", error);
-            });
+            })
+            .finally(() => {
+                // Hide the spinner
+                //spinner.classList.add("d-none");
+
+                // Reset the search button appearance and text
+                searchButton.disabled = false;
+                searchButton.innerHTML = "Search";
         });
+        });
+
+        
+    
+        
     });
 </script>
 
