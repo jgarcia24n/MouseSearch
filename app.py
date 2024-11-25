@@ -104,7 +104,7 @@ def search():
                 item["added"] = format_date(item.get("added", "Unknown"))
             ranked_results = rank_results(data)
             data = ranked_results
-            data = check_existing_torrents(ranked_results)
+            # data = check_existing_torrents(ranked_results)
         else:
             total_results = 0
             total_pages = 0
