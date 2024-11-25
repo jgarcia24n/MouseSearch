@@ -40,11 +40,6 @@ def update_cookies(response):
         cookies = response.cookies.get_dict()
         session_cookies.update(cookies)
 
-
-#@app.route("/", methods=["GET", "POST"])
-#def home():
-#    return render_template('index.html')
-
 @app.route("/", methods=["GET", "POST"])
 def search():
     categories = {}
