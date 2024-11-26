@@ -1,17 +1,18 @@
+
 {% if no_results %}
     <div class="alert alert-warning text-center" role="alert">
         No results found. Please try a different search query.
     </div>
 {% else %}
     {% for result in results %}
-    <div class="row py-4 border-bottom">
+    <div class="row my-3 mx-0 py-2 pe-lg-0 rounded-1 border shadow-sm">
         <div class="col-6 col-md-4">
         <img 
             class="img-fluid me-2 rounded"
             src="{{ url_for('proxy_thumbnail', url=result.thumbnail) }}" 
             alt="Thumbnail" 
         >
-    </div>
+        </div>
         <div class="col-6 col-md-5 pb-3 mb-0 small lh-sm">
             <div class="d-flex justify-content-between">
                 <strong class="text-gray-dark">{{ result.title }}</strong>
@@ -43,7 +44,7 @@
     </div>
     {% endfor %}
 
-    <!-- add to qBittorrent -->
+    <!-- add to qBittorrent
     {% for result in results %}
     <div class="row py-4 border-bottom">
         <div class="col-6 col-md-4">
@@ -80,7 +81,7 @@
             <div class="response-message"></div>
         </div>
     </div>
-    {% endfor %}
+    {% endfor %} -->
 
     <script>
         // Ensure script runs after DOM is fully loaded
