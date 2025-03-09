@@ -245,6 +245,15 @@
             </select>
             <label for="media_type">Media type</label>
           </div>
+          <!-- New language selector -->
+          <div class="mb-3 form-floating">
+            <select class="form-select" name="language" id="language" aria-label="Language">
+              {% for lang in ['English','Afrikaans','Arabic','Bengali','Bosnian','Bulgarian','Burmese','Cantonese','Catalan','Chinese','Croatian','Czech','Danish','Dutch','Estonian','Farsi','Finnish','French','German','Greek','Greek, Ancient','Gujarati','Hebrew','Hindi','Hungarian','Icelandic','Indonesian','Irish','Italian','Japanese','Javanese','Kannada','Korean','Lithuanian','Latin','Latvian','Malay','Malayalam','Manx','Marathi','Norwegian','Polish','Portuguese','Brazilian Portuguese (BP)','Punjabi','Romanian','Russian','Scottish Gaelic','Sanskrit','Serbian','Slovenian','Spanish','Castilian Spanish','Swedish','Tagalog','Tamil','Telugu','Thai','Turkish','Ukrainian','Urdu','Vietnamese','Other'] %}
+              <option value="{{ lang }}" {% if lang=='English' %}selected{% endif %}>{{ lang }}</option>
+              {% endfor %}
+            </select>
+            <label for="language">Language</label>
+          </div>
           <button class="btn btn-primary w-100 py-2" id="searchButton" type="submit">Search</button>
         </form>
 
