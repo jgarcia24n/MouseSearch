@@ -30,28 +30,29 @@ FALLBACK_CONFIG = {
 CONFIG_FILE = "config.json"
 
 def load_config():
-    """Load configuration from config.json and environment variables."""
+    """Load configuration with priority: config.json > Env Vars > Fallbacks."""
+    # Start with fallback defaults
     config = FALLBACK_CONFIG.copy()
 
-    # Try to load the config.json file
+    # 1. Load from Environment Variables. These will serve as a base if not in config.json.
+    env_config = {
+        key: os.getenv(key) for key in config.keys()
+    }
+    # Filter out any 'None' values so they don't overwrite fallbacks with nothing
+    env_config_filtered = {k: v for k, v in env_config.items() if v is not None}
+    config.update(env_config_filtered)
+
+    # 2. Load from config.json, which will override any fallbacks or env vars.
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r") as f:
-            file_config = json.load(f)
-            config.update(file_config)
-
-    # Override with environment variables if available
-    config.update({
-        "FLASK_SECRET_KEY": os.getenv("FLASK_SECRET_KEY", config["FLASK_SECRET_KEY"]),
-        "MAM_API_URL": os.getenv("MAM_API_URL", config["MAM_API_URL"]),
-        "QB_URL": os.getenv("QB_URL", config["QB_URL"]),
-        "QB_CATEGORY": os.getenv("QB_CATEGORY", config["QB_CATEGORY"]),
-        "QB_USERNAME": os.getenv("QB_USERNAME", config["QB_USERNAME"]),
-        "QB_PASSWORD": os.getenv("QB_PASSWORD", config["QB_PASSWORD"]),
-        "MAM_ID": os.getenv("MAM_ID", config["MAM_ID"]),
-        "MAM_UID": os.getenv("MAM_UID", config["MAM_UID"]),
-        "CF_ACCESS_CLIENT_ID": os.getenv("CF_ACCESS_CLIENT_ID", config["CF_ACCESS_CLIENT_ID"]),
-        "CF_ACCESS_CLIENT_SECRET": os.getenv("CF_ACCESS_CLIENT_SECRET", config["CF_ACCESS_CLIENT_SECRET"]),
-    })
+            try:
+                file_config = json.load(f)
+                config.update(file_config)
+            except json.JSONDecodeError:
+                # Handle case where config.json is corrupted or empty
+                app.logger.warning(
+                    f"Could not decode {CONFIG_FILE}. Using fallbacks/env vars."
+                )
 
     return config
 
