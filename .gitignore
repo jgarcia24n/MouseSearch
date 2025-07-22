@@ -129,6 +129,7 @@ celerybeat.pid
 .env
 .envxxx
 config.json
+ip_state.json
 .venv
 env/
 venv/
