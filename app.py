@@ -98,6 +98,89 @@ def load_new_app_config():
 
 load_new_app_config()
 
+# --- IP STATE MANAGEMENT AND DYNAMIC IP UPDATER ---
+
+def load_ip_state():
+    """Loads the last known IP from the state file."""
+    if os.path.exists(IP_STATE_FILE):
+        try:
+            with open(IP_STATE_FILE, "r") as f:
+                return json.load(f).get("last_ip")
+        except (json.JSONDecodeError, FileNotFoundError):
+            app.logger.warning(f"Could not read or parse {IP_STATE_FILE}.")
+    return None
+
+def save_ip_state(ip):
+    """Saves the current IP to the state file."""
+    with open(IP_STATE_FILE, "w") as f:
+        json.dump({"last_ip": ip}, f, indent=4)
+
+def force_update_ip():
+    """Directly calls the MAM dynamic seedbox API to update the IP, bypassing change checks."""
+    with app.app_context():
+        app.logger.info("Forcing manual IP update for dynamic seedbox.")
+
+        if not app.config.get("MAM_ID"):
+            app.logger.warning("MAM_ID not set in config. Skipping manual IP update.")
+            return
+
+        api_cookies = {"mam_id": app.config.get("MAM_ID")}
+
+        try:
+            update_url = "https://t.myanonamouse.net/json/dynamicSeedbox.php"
+            update_response = requests.get(update_url, cookies=api_cookies, timeout=15)
+            update_response.raise_for_status()
+            update_data = update_response.json()
+
+            msg = update_data.get("msg")
+            success = update_data.get("Success")
+
+            if success and msg in ["Completed", "No Change"]:
+                app.logger.info(f"Successfully triggered dynamic seedbox IP update. API Message: '{msg}'")
+                if new_ip := update_data.get("ip"):
+                    save_ip_state(new_ip)  # Keep state file in sync
+            else:
+                app.logger.error(f"Failed to trigger dynamic seedbox IP update. API Message: '{msg}' (Success: {success})")
+
+        except (RequestException, json.JSONDecodeError) as e:
+            app.logger.error(f"Error calling dynamic seedbox update API during manual trigger: {e}")
+
+@scheduler.task('interval', id='ip_check_job', hours=3, misfire_grace_time=900)
+def check_and_update_ip():
+    """Periodically checks public IP and updates MAM's dynamic seedbox IP if it has changed."""
+    with app.app_context():
+        app.logger.info("Running scheduled job: Check and Update IP.")
+        
+        if not app.config.get("MAM_ID"):
+            app.logger.warning("MAM_ID not set in config. Skipping dynamic IP update.")
+            return
+
+        api_cookies = {"mam_id": app.config.get("MAM_ID")}
+        
+        try:
+            ip_check_url = f"{app.config.get('MAM_API_URL')}/json/jsonIp.php"
+            response = requests.get(ip_check_url, cookies=api_cookies, timeout=10)
+            response.raise_for_status()
+            current_ip = response.json().get("ip")
+            if not current_ip:
+                app.logger.error("IP check API did not return an IP address.")
+                return
+        except (RequestException, json.JSONDecodeError) as e:
+            app.logger.error(f"Failed to get current IP from MAM API: {e}")
+            return
+            
+        last_ip = load_ip_state()
+        app.logger.info(f"Current IP: {current_ip}, Last known IP: {last_ip}")
+
+        if current_ip == last_ip:
+            app.logger.info("IP address has not changed. No update needed.")
+            return
+
+        app.logger.info(f"IP address has changed from {last_ip} to {current_ip}. Updating dynamic seedbox IP.")
+        force_update_ip()
+
+
+# --- SESSION AND API HELPERS ---
 QB_SESSION = None
 
 def update_cookies(response):
@@ -107,12 +190,9 @@ def update_cookies(response):
         cookies = response.cookies.get_dict()
         mam_session_cookies.update(cookies)
 
-
-# Function to login to MyAnonamouse
 def login_mam():
     url = app.config.get("MAM_API_URL")
     if not url: return False
-    # Make sure we have both cookies before trying to log in
     if not all([mam_session_cookies.get("mam_id"), mam_session_cookies.get("uid")]):
         return False
     response = requests.get(f"{url}/jsonLoad.php", cookies=mam_session_cookies)
@@ -134,6 +214,7 @@ def login_qbittorrent():
     except RequestException: return False
     return False
 
+# --- FLASK ROUTES ---
 @app.route('/mam/status', methods=['GET'])
 def mam_status(): return jsonify({'status': 'connected' if login_mam() else 'not connected'})
 
@@ -163,11 +244,56 @@ def qb_categories():
 def qb_add_torrent():
     if 'qb_session' not in session and not login_qbittorrent():
         return jsonify({'error': 'Not connected to qBittorrent'}), 401
-    data = {'urls': request.json.get('torrent_url'), 'category': request.json.get('category', '')}
+
+    incoming_data = request.get_json()
+    if not incoming_data:
+        app.logger.error("Received empty or non-JSON payload for /qb/add")
+        return jsonify({'error': 'Invalid request: No JSON body found'}), 400
+
+    app.logger.info(f"Received /qb/add request with payload: {incoming_data}")
+
+    torrent_url = incoming_data.get('torrent_url') or incoming_data.get('url')
+    
+    if not torrent_url or not isinstance(torrent_url, str) or not torrent_url.strip():
+        app.logger.error("FATAL: The 'torrent_url' in the request payload was empty.")
+        return jsonify({'error': "An empty torrent_url was sent from the browser."}), 400
+
+    category = incoming_data.get('category', '')
+    qb_url = app.config['QB_URL']
+
+    payload = {
+        'urls': torrent_url,
+        'category': category
+    }
+
+    custom_headers = app.config.get("BASE_HEADERS", {}).copy()
+    custom_headers['Referer'] = qb_url
+
     session_obj = requests.Session()
     session_obj.cookies.update(session['qb_session'])
-    response = session_obj.post(f"{app.config['QB_URL']}/api/v2/torrents/add", data=data, headers=app.config.get("BASE_HEADERS", {}))
-    return jsonify({'message': 'Torrent added successfully'}) if response.ok else (jsonify({'error': 'Failed to add torrent'}), response.status_code)
+
+    try:
+        app.logger.info(f"Attempting to add torrent via URL to qBittorrent: {torrent_url}")
+        response = session_obj.post(
+            f"{qb_url}/api/v2/torrents/add",
+            data=payload,
+            headers=custom_headers
+        )
+        response.raise_for_status()
+
+        if "Ok." in response.text:
+            app.logger.info("SUCCESS: Torrent added to qBittorrent.")
+            return jsonify({'message': 'Torrent added successfully'})
+        else:
+            error_message = f"qBittorrent rejected the torrent. Response: {response.text or '[No Response Body]'}"
+            app.logger.error(error_message)
+            return jsonify({'error': error_message}), 400
+
+    except RequestException as e:
+        app.logger.error(f"Failed to send 'add torrent' request to qBittorrent: {e}")
+        return jsonify({'error': f'Failed to communicate with qBittorrent: {e}'}), 503
+
+
 
 def parse_author_info(info):
     try: return ", ".join(json.loads(info).values())
@@ -209,19 +335,27 @@ def mam_search():
     headers = {"Cookie": "; ".join([f"{k}={v}" for k, v in mam_session_cookies.items()])}
     try:
         response = requests.get(f"{app.config['MAM_API_URL']}/tor/js/loadSearchJSONbasic.php", params=params, headers=headers)
-        update_cookies(response)  # Update cookies
+        update_cookies(response)
         
         response.raise_for_status()
-        results = response.json().get("data", [])
+        json_data = response.json()
+        results = json_data.get("data", [])
 
-        # ─── thumbnail fallback: use category icon if none provided ───
+        # --- THIS IS THE FIX ---
+        # The API returns a 'dl' hash. We must construct the full download_link for the template.
+        base_dl_url = f"{app.config['MAM_API_URL']}/tor/download.php/"
         for item in results:
+            if dl_hash := item.get('dl'):
+                item['download_link'] = base_dl_url + dl_hash
+            else:
+                item['download_link'] = '' # Ensure key exists even if hash is missing
+
             if not item.get('thumbnail'):
                 cat = item.get('category', '')
                 item['thumbnail'] = f"https://static.myanonamouse.net/pic/cats/3/{cat}.png"
+        # --- END FIX ---
 
         ranked = rank_results(results)
-
         
         qb_status_response, status_code = qb_status()
         qb_status_json = qb_status_response.get_json()
@@ -238,6 +372,8 @@ def mam_search():
         return render_template("partials/results.html", error_message=f"Error connecting to MAM API: {e}")
     except json.JSONDecodeError:
         return render_template("partials/results.html", error_message="Failed to decode API response. Your session cookie might be invalid.")
+
+
 
 @app.route("/")
 def index():
@@ -265,30 +401,26 @@ def proxy_thumbnail():
 @app.route("/update_settings", methods=["POST"])
 def update_settings():
     form = request.form
-    # Create a copy of the current config to modify
     config_to_update = app.config.copy()
     
-    # Update values from the form
     for key in FALLBACK_CONFIG.keys():
         if key in form:
             config_to_update[key] = form[key]
     if form.get("QB_PASSWORD"):
         config_to_update["QB_PASSWORD"] = form.get("QB_PASSWORD")
 
-    # Save the updated configuration
     save_config(config_to_update)
-    # Reload all settings, which will also trigger the UID fetch if needed
     load_new_app_config()
 
-    # Manually trigger an IP check after saving new credentials
-    job_id = 'ip_check_job_manual'
-    run_time = datetime.now() + timedelta(seconds=2)
+    # Manually trigger a forced IP update after saving new credentials.
+    job_id = 'manual_ip_update_job'
+    run_time = datetime.now() + timedelta(seconds=2) # Run 2 seconds after the request finishes
     if scheduler.get_job(job_id):
         scheduler.reschedule_job(job_id, trigger='date', run_date=run_time)
     else:
-        scheduler.add_job(id=job_id, func=check_and_update_ip, trigger='date', run_date=run_time)
+        scheduler.add_job(id=job_id, func=force_update_ip, trigger='date', run_date=run_time)
     
-    return jsonify({"status": "success", "message": "Settings updated successfully!"})
+    return jsonify({"status": "success", "message": "Settings updated! A manual IP update has been triggered."})
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the Flask app.")
