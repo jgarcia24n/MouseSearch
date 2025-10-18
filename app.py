@@ -21,10 +21,11 @@ app.config.from_object(Config())
 scheduler = APScheduler()
 scheduler.init_app(app)
 scheduler.start()
+
 atexit.register(lambda: scheduler.shutdown())
 
-IP_STATE_FILE = "ip_state.json"
-CONFIG_FILE = "config.json"
+IP_STATE_FILE = "/app/data/ip_state.json"
+CONFIG_FILE = "/app/data/config.json"
 load_dotenv()
 
 # Define fallback values
@@ -135,7 +136,7 @@ def force_update_ip():
             msg = update_data.get("msg")
             success = update_data.get("Success")
 
-            if success and msg in ["Completed", "No Change"]:
+            if success and msg and msg.lower() in ["completed", "no change"]:
                 app.logger.info(f"Successfully triggered dynamic seedbox IP update. API Message: '{msg}'")
                 if new_ip := update_data.get("ip"):
                     save_ip_state(new_ip)  # Keep state file in sync
@@ -179,7 +180,16 @@ def check_and_update_ip():
         app.logger.info(f"IP address has changed from {last_ip} to {current_ip}. Updating dynamic seedbox IP.")
         force_update_ip()
 
-
+# Schedule the IP check to run 5 seconds after startup, now that the function is defined.
+with app.app_context():
+    if not scheduler.get_job('initial_ip_check_job'):
+        scheduler.add_job(
+            id='initial_ip_check_job',
+            func=check_and_update_ip,
+            trigger='date',
+            run_date=datetime.now() + timedelta(seconds=5)
+        )
+        
 # --- SESSION AND API HELPERS ---
 QB_SESSION = None
 
@@ -427,4 +437,4 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="127.0.0.1", help="Host address.")
     parser.add_argument("--port", default=5000, type=int, help="Port number.")
     args = parser.parse_args()
-    app.run(host=args.host, port=args.port, debug=True)
+    app.run(host=args.host, port=args.port, debug=True, use_reloader=False)

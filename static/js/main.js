@@ -80,8 +80,8 @@ document.addEventListener("DOMContentLoaded", function () {
     const wrapper = document.getElementById('results-container-wrapper');
 
     checkQBStatus();
-    setInterval(checkForIpUpdate, 30000);
-    checkForIpUpdate();
+    // setInterval(checkForIpUpdate, 30000);
+    // checkForIpUpdate();
 
     document.getElementById('save-settings-button').addEventListener('click', function () {
         fetch('/update_settings', { method: 'POST', body: new FormData(document.getElementById('settings-form')) })

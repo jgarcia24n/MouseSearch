@@ -1,0 +1,26 @@
+version: '3.8'
+services:
+  web:
+    build: .
+    container_name: mousesearch
+    ports:
+      - "5009:5000"
+    environment:
+      - FLASK_SECRET_KEY=${FLASK_SECRET_KEY}
+      - MAM_ID=${MAM_ID}
+      - MAM_UID=${MAM_UID}
+      - QB_URL=${QB_URL}
+      - QB_USERNAME=${QB_USERNAME}
+      - QB_PASSWORD=${QB_PASSWORD}
+      - QB_CATEGORY=${QB_CATEGORY}
+      - CF_ACCESS_CLIENT_ID=${CF_ACCESS_CLIENT_ID}
+      - CF_ACCESS_CLIENT_SECRET=${CF_ACCESS_CLIENT_SECRET}
+    volumes:
+      - ./data:/app/data
+    networks:
+      - proxy-network
+      - default
+
+networks:
+  proxy-network:
+    external: true
