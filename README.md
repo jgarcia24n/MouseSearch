@@ -81,7 +81,7 @@ The application will be accessible at [http://localhost:5000](http://localhost:5
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/sevenlayercookie/mousesearch.git](https://github.com/sevenlayercookie/mousesearch.git)
+    git clone https://github.com/sevenlayercookie/mousesearch.git
     cd mousesearch
     ```
 
@@ -100,7 +100,7 @@ The application will be accessible at [http://localhost:5000](http://localhost:5
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/sevenlayercookie/mousesearch.git](https://github.com/sevenlayercookie/mousesearch.git)
+    git clone https://github.com/sevenlayercookie/mousesearch.git
     cd mousesearch
     ```
 
