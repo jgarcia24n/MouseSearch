@@ -168,6 +168,7 @@ document.addEventListener("DOMContentLoaded", function () {
         fetch(`/mam/search?${queryParams}`)
             .then(response => response.text()) // Expect HTML now, not JSON
             .then(html => {
+                wrapper.style.display = 'block'; // Make the results container visible
                 resultsContainer.innerHTML = html;
                 wrapper.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 refreshCategories();
@@ -175,6 +176,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
             })
             .catch(error => {
+                wrapper.style.display = 'block';
                 resultsContainer.innerHTML = `<div class="alert alert-danger">Search failed. See console for details.</div>`;
                 console.error("Error during search request:", error);
             })
