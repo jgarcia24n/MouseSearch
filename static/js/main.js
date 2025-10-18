@@ -137,6 +137,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const resultsContainer = document.getElementById("results-container");
     const searchButton = document.getElementById("searchButton");
     const wrapper = document.getElementById('results-container-wrapper');
+    const resultsTitle = document.getElementById('results-title');
 
     checkQBStatus();
     loadMamUserData();
@@ -163,6 +164,10 @@ document.addEventListener("DOMContentLoaded", function () {
         searchButton.disabled = true;
         searchButton.innerHTML = `<span class="spinner-border spinner-border-sm" aria-hidden="true"></span> Searching...`;
 
+        if (resultsTitle) {
+            resultsTitle.textContent = 'Results';
+        }
+
         const queryParams = new URLSearchParams(new FormData(searchForm)).toString();
 
         fetch(`/mam/search?${queryParams}`)
@@ -170,6 +175,12 @@ document.addEventListener("DOMContentLoaded", function () {
             .then(html => {
                 wrapper.style.display = 'block'; // Make the results container visible
                 resultsContainer.innerHTML = html;
+
+                const resultsCount = resultsContainer.querySelectorAll('.row.my-3').length;
+                if (resultsTitle) {
+                    resultsTitle.textContent = `Results (${resultsCount})`;
+                }
+                
                 wrapper.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 refreshCategories();
                 const tooltipTriggerList = resultsContainer.querySelectorAll('[data-bs-toggle="tooltip"]');
