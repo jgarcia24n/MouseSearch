@@ -20,20 +20,32 @@
             <a href="https://www.myanonamouse.net/t/{{ result.id }}" target="_blank">
                 <strong class="text-gray-dark">{{ result.title | safe }}</strong>
             </a>
-
         </div>
-        <span class="d-block">Narrator: {{ result.narrator_info or "Unknown" }}</span>
-        <span class="d-block">File Type: {{ result.filetype }}</span>
-        <span class="d-block">Size: {{ result.size }}</span>
-        <span class="d-block">Date Added: {{ result.added }}</span>
-        <span class="d-block">Seeders/Leechers: {{ result.seeders }}/{{ result.leechers }}</span>
-        <span class="d-block">Relevance Score: {{ result.score }}</span>
+        
+        <div class="my-1">
             {% if result.my_snatched == 1 %}
-        <span class="badge bg-success ms-2">Previously Downloaded</span>
+            <span class="badge bg-success">Downloaded</span>
             {% endif %}
             {% if result.vip == 1 %}
-        <span class="badge bg-warning ms-2">VIP</span>
+            <span class="badge bg-warning text-dark">VIP</span>
             {% endif %}
+            {% if result.free == 1 or result.personal_freeleech == 1 %}
+            <span class="badge bg-info text-dark">Freeleech</span>
+            {% endif %}
+          <!--  <span class="badge bg-secondary">{{ result.lang_code }}</span> 
+            -->
+        </div>
+
+        {% if result.series_display %}
+        <span class="d-block"><strong>Series:</strong> {{ result.series_display }}</span>
+        {% endif %}
+        
+        <span class="d-block"><strong>Narrator:</strong> {{ result.narrator_info or "N/A" }}</span>
+        <span class="d-block"><strong>File Type:</strong> {{ result.filetype }}</span>
+        <span class="d-block"><strong>Size:</strong> {{ result.size }}</span>
+        <span class="d-block"><strong>Added:</strong> {{ result.added }}</span>
+        <span class="d-block"><strong>S/L:</strong> {{ result.seeders }}/{{ result.leechers }}</span>
+        <span class="d-block"><strong>Score:</strong> {{ result.score }}</span>
     </div>
     <div class="col-12 col-md-3 py-2 d-flex flex-column justify-content-center">
     {% if result.download_link %}

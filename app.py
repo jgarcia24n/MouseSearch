@@ -351,6 +351,16 @@ def rank_results(results):
     for r in results:
         r["author_info"] = parse_author_info(r.get("author_info", ""))
         r["narrator_info"] = parse_author_info(r.get("narrator_info", ""))
+        
+        series_data = r.get("series_info", "")
+        try:
+            series_json = json.loads(series_data)
+            # Example: {"2887": ["The Inheritance Cycle", "5"]} -> "The Inheritance Cycle, Book 5"
+            series_name, book_number = next(iter(series_json.values()))
+            r["series_display"] = f"{series_name}, Book {book_number}" if book_number else series_name
+        except (json.JSONDecodeError, TypeError, StopIteration):
+            r["series_display"] = ""
+            
         r["added"] = format_date(r.get("added", "Unknown"))
         filetype_score = {'m4b': 50, 'mp3': 30}.get(r.get('filetype'), 10)
         seeders_score = (r.get('seeders', 0) / max_seeders * 30) if max_seeders > 0 else 0
