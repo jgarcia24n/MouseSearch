@@ -1,3 +1,4 @@
+# app.py
 from flask import Flask, request, render_template, Response, make_response, jsonify, session
 import requests
 import json
@@ -9,6 +10,9 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from requests.exceptions import RequestException
 from flask_apscheduler import APScheduler
+
+import hashlib
+import bencodepy
 
 import logging # for gunicorn logging
 
@@ -283,8 +287,6 @@ def qb_categories():
     response = session_obj.get(f"{app.config['QB_URL']}/api/v2/torrents/categories", headers=app.config.get("BASE_HEADERS", {}))
     return jsonify(response.json()) if response.ok else (jsonify({'error': 'Failed to fetch categories'}), response.status_code)
 
-
-
 @app.route('/qb/add', methods=['POST'])
 def qb_add_torrent():
     if 'qb_session' not in session and not login_qbittorrent():
@@ -338,7 +340,92 @@ def qb_add_torrent():
         app.logger.error(f"Failed to send 'add torrent' request to qBittorrent: {e}")
         return jsonify({'error': f'Failed to communicate with qBittorrent: {e}'}), 503
 
+@app.route('/qb/properties/<hash_val>', methods=['GET'])
+def qb_torrent_properties(hash_val):
+    if 'qb_session' not in session and not login_qbittorrent():
+        return jsonify({'error': 'Not connected to qBittorrent'}), 401
+    
+    session_obj = requests.Session()
+    session_obj.cookies.update(session['qb_session'])
+    
+    try:
+        response = session_obj.get(
+            f"{app.config['QB_URL']}/api/v2/torrents/properties",
+            params={'hash': hash_val},
+            headers=app.config.get("BASE_HEADERS", {})
+        )
+        response.raise_for_status()
+        return jsonify(response.json())
+    except RequestException as e:
+        return jsonify({'error': f'Failed to fetch torrent properties: {e}'}), 503
 
+@app.route('/calculate_hash', methods=['POST'])
+def get_torrent_hash():
+    data = request.get_json()
+    url = data.get('url')
+    if not url:
+        return jsonify({'error': 'URL is required'}), 400
+    
+    hash_val = calculate_torrent_hash_from_url(url)
+    
+    if hash_val:
+        return jsonify({'hash': hash_val})
+    else:
+        return jsonify({'error': 'Failed to calculate hash'}), 500
+
+# torrent hash calculation utility
+def calculate_torrent_hash_from_url(url: str) -> str | None:
+    """
+    Downloads a .torrent file from a URL and calculates its info hash.
+
+    The info hash is the SHA-1 hash of the bencoded 'info' dictionary
+    from the torrent file.
+
+    Args:
+        url: The URL of the .torrent file.
+
+    Returns:
+        The calculated info hash as a 40-character hexadecimal string,
+        or None if an error occurs.
+    """
+    try:
+        # 1. Fetch the .torrent file from the URL
+        print(f"Fetching torrent file from: {url}")
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
+        
+        # The content of the torrent file in bytes
+        torrent_content = response.content
+        
+        # 2. Decode the bencoded torrent content
+        # The result is a dictionary with byte-string keys
+        torrent_data = bencodepy.decode(torrent_content)
+        
+        # 3. Get the 'info' dictionary from the torrent data
+        # The 'info' key is a byte string b'info'
+        if b'info' not in torrent_data:
+            print("Error: 'info' dictionary not found in torrent file.")
+            return None
+            
+        info_dict = torrent_data[b'info']
+        
+        # 4. Bencode the 'info' dictionary back into bytes
+        bencoded_info = bencodepy.encode(info_dict)
+        
+        # 5. Calculate the SHA-1 hash of the bencoded info dictionary
+        sha1_hash = hashlib.sha1(bencoded_info).hexdigest()
+        
+        return sha1_hash
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching the URL: {e}")
+        return None
+    except bencodepy.BencodeDecodeError as e:
+        print(f"Error decoding the torrent file: {e}")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        return None
 
 def parse_author_info(info):
     try: return ", ".join(json.loads(info).values())
