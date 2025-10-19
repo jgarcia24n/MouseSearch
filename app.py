@@ -139,6 +139,7 @@ async def load_new_app_config():
         "CF-Access-Client-Id": new_config.get("CF_ACCESS_CLIENT_ID"),
         "CF-Access-Client-Secret": new_config.get("CF_ACCESS_CLIENT_SECRET"),
     }
+    app.config["BASE_HEADERS"] = {k: v for k, v in app.config["BASE_HEADERS"].items() if v is not None}
     
     global mam_session_cookies
     mam_session_cookies = {"mam_id": app.config.get("MAM_ID"), "uid": app.config.get("MAM_UID")}
