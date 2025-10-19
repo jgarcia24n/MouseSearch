@@ -298,7 +298,7 @@ document.addEventListener("DOMContentLoaded", function () {
         if (resultsTitle) {
             resultsTitle.textContent = 'Results';
         }
-        
+
         // Clear all existing polling intervals before a new search
         console.log("[SEARCH] New search submitted. Clearing all active polling intervals.");
         for (const hash in pollingIntervals) {
@@ -318,7 +318,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 if (resultsTitle) {
                     resultsTitle.textContent = `Results (${resultsCount})`;
                 }
-                
+
                 wrapper.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 refreshCategories();
                 initializeSnatchedTorrents();
@@ -340,6 +340,8 @@ document.addEventListener("DOMContentLoaded", function () {
         if (button) {
             event.preventDefault();
             const torrentUrl = button.dataset.torrentUrl;
+            const author = button.dataset.author;
+            const title = button.dataset.title;
             // Find the category dropdown within the same result item
             const resultItem = button.closest('.result-item');
             const category = resultItem.querySelector('.category-dropdown')?.value || '';
@@ -349,27 +351,32 @@ document.addEventListener("DOMContentLoaded", function () {
             button.disabled = true;
             fetch('/qb/add', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ torrent_url: torrentUrl, category: category }),
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    torrent_url: torrentUrl,
+                    category: category,
+                    author: author,
+                    title: title
+                }),
             })
-            .then(response => response.json())
-            .then(async data => {
-                showToast(data.message || data.error, data.message ? 'success' : 'danger');
-                if(data.message) {
-                    console.log("[ADD] Torrent added successfully via API.");
-                    button.textContent = 'Added!';
-                    const hash = await getTorrentHash(torrentUrl);
-                    if (hash) {
-                        pollTorrentStatus(hash, resultItem);
+                .then(response => response.json())
+                .then(async data => {
+                    showToast(data.message || data.error, data.message ? 'success' : 'danger');
+                    if (data.message) {
+                        console.log("[ADD] Torrent added successfully via API.");
+                        button.textContent = 'Added!';
+                        const hash = await getTorrentHash(torrentUrl);
+                        if (hash) {
+                            pollTorrentStatus(hash, resultItem);
+                        }
+                    } else {
+                        console.error("[ADD] Failed to add torrent:", data.error);
                     }
-                } else {
-                     console.error("[ADD] Failed to add torrent:", data.error);
-                }
-            })
-            .catch(error => {
-                showToast("An error occurred while adding torrent.", 'danger');
-                button.disabled = false;
-            });
+                })
+                .catch(error => {
+                    showToast("An error occurred while adding torrent.", 'danger');
+                    button.disabled = false;
+                });
         }
     });
 });

@@ -14,6 +14,9 @@ from flask_apscheduler import APScheduler
 import hashlib
 import bencodepy
 
+import re
+from pathlib import Path
+
 import logging # for gunicorn logging
 
 from language_dict import language_dict
@@ -36,8 +39,6 @@ scheduler.start()
 
 atexit.register(lambda: scheduler.shutdown())
 
-IP_STATE_FILE = "/app/data/ip_state.json"
-CONFIG_FILE = "/app/data/config.json"
 load_dotenv()
 
 # Define fallback values
@@ -52,13 +53,33 @@ FALLBACK_CONFIG = {
     "MAM_UID": "",
     "CF_ACCESS_CLIENT_ID": None,
     "CF_ACCESS_CLIENT_SECRET": None,
+    "METADATA_FILE": "/app/data/metadata.json",
+    "IP_STATE_FILE": "/app/data/ip_state.json", 
+    "CONFIG_FILE": "/app/data/config.json",
+    "ORGANIZED_PATH": "/app/data/organized",
+    "QB_PATH": "/app/data/organized",
+    "AUTO_ORGANIZE": False,
 }
+
+# Load file paths from environment variables or use defaults
+METADATA_FILE = os.getenv("METADATA_FILE", FALLBACK_CONFIG["METADATA_FILE"])
+ORGANIZED_PATH = os.getenv("ORGANIZED_PATH", FALLBACK_CONFIG["ORGANIZED_PATH"])
+QB_PATH = os.getenv("QB_PATH", FALLBACK_CONFIG["QB_PATH"])
+IP_STATE_FILE = os.getenv("IP_STATE_FILE", FALLBACK_CONFIG["IP_STATE_FILE"])
+CONFIG_FILE = os.getenv("CONFIG_FILE", FALLBACK_CONFIG["CONFIG_FILE"])
+
+ORGANIZED_PATH = Path(os.getenv("ORGANIZED_PATH", "./data/organized")).resolve()
+QB_PATH = Path(os.getenv("QB_PATH", "./data/organized")).resolve()
 
 def load_config():
     config = FALLBACK_CONFIG.copy()
     env_config = {key: os.getenv(key) for key in config.keys()}
     env_config_filtered = {k: v for k, v in env_config.items() if v is not None}
     config.update(env_config_filtered)
+    
+    auto_organize_str = str(config.get("AUTO_ORGANIZE", "false")).lower()
+    config["AUTO_ORGANIZE"] = auto_organize_str in ['true', '1', 'yes', 'on']
+    
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r") as f:
             try:
@@ -300,32 +321,37 @@ def qb_add_torrent():
     app.logger.info(f"Received /qb/add request with payload: {incoming_data}")
 
     torrent_url = incoming_data.get('torrent_url') or incoming_data.get('url')
+    author = incoming_data.get('author', 'Unknown Author')
+    title = incoming_data.get('title', 'Unknown Title')
     
-    if not torrent_url or not isinstance(torrent_url, str) or not torrent_url.strip():
-        app.logger.error("FATAL: The 'torrent_url' in the request payload was empty.")
-        return jsonify({'error': "An empty torrent_url was sent from the browser."}), 400
-
-    category = incoming_data.get('category', '')
+    if app.config.get("AUTO_ORGANIZE"):
+        hash_val = calculate_torrent_hash_from_url(torrent_url)
+        if not hash_val:
+            app.logger.warning(f"AUTO_ORGANIZE is enabled, but could not calculate hash for {torrent_url}.")
+        else:
+            metadata = load_metadata()
+            metadata[hash_val] = {
+                "author": author,
+                "title": title,
+                "added_on": datetime.now().isoformat(),
+                "organized": False,
+                "retry_count": 0
+            }
+            save_metadata(metadata)
+            app.logger.info(f"Saved metadata for torrent hash: {hash_val}")
+    
+    # --- The rest of the function remains the same ---
+    category = incoming_data.get('category', app.config.get("QB_CATEGORY", ""))
     qb_url = app.config['QB_URL']
-
-    payload = {
-        'urls': torrent_url,
-        'category': category
-    }
-
+    payload = {'urls': torrent_url, 'category': category}
     custom_headers = app.config.get("BASE_HEADERS", {}).copy()
     custom_headers['Referer'] = qb_url
-
     session_obj = requests.Session()
     session_obj.cookies.update(session['qb_session'])
 
     try:
         app.logger.info(f"Attempting to add torrent via URL to qBittorrent: {torrent_url}")
-        response = session_obj.post(
-            f"{qb_url}/api/v2/torrents/add",
-            data=payload,
-            headers=custom_headers
-        )
+        response = session_obj.post(f"{qb_url}/api/v2/torrents/add", data=payload, headers=custom_headers)
         response.raise_for_status()
 
         if "Ok." in response.text:
@@ -339,7 +365,29 @@ def qb_add_torrent():
     except RequestException as e:
         app.logger.error(f"Failed to send 'add torrent' request to qBittorrent: {e}")
         return jsonify({'error': f'Failed to communicate with qBittorrent: {e}'}), 503
+    
+def load_metadata():
+    """Loads the torrent metadata store."""
+    if not os.path.exists(METADATA_FILE):
+        return {}
+    try:
+        with open(METADATA_FILE, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return {}
 
+def save_metadata(data):
+    """Saves the torrent metadata store."""
+    with open(METADATA_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+
+def sanitize_filename(name: str) -> str:
+    """Removes characters that are invalid for directory or file names."""
+    sanitized = re.sub(r'[<>:"/\\|?*]', '', name)
+    sanitized = sanitized.strip('. ')
+    return sanitized if sanitized else "Untitled"
+
+    
 @app.route('/qb/info/<hash_val>', methods=['GET'])
 def qb_torrent_info(hash_val):
     app.logger.info(f"Request received for torrent info with hash: {hash_val}")
@@ -569,6 +617,126 @@ def update_settings():
     
     return jsonify({"status": "success", "message": "Settings updated! A manual IP update has been triggered."})
 
+if app.config.get("AUTO_ORGANIZE"):
+    app.logger.info("AUTO_ORGANIZE is enabled. Registering webhook and safety net job.")
+
+    def _perform_organization(hash_val: str) -> tuple[bool, str]:
+        """
+        Performs the file organization for a given torrent hash.
+        Returns a tuple of (success_boolean, message_string).
+        """
+        # 1. Load metadata and perform checks
+        metadata = load_metadata()
+        if hash_val not in metadata:
+            return False, f"Cannot organize: No metadata found for hash {hash_val}."
+        
+        if metadata[hash_val].get('organized', False):
+            return True, f"Skipping: Torrent {hash_val} is already marked as organized."
+
+        # Check retry count to avoid infinite retries
+        retry_count = metadata[hash_val].get('retry_count', 0)
+        if retry_count >= 3:
+            return True, f"Skipping: Torrent {hash_val} has exceeded maximum retry attempts ({retry_count})."
+
+        # 2. Get torrent info from qBittorrent to find its content path
+        if not login_qbittorrent():
+            return False, "qBittorrent login failed."
+        
+        session_obj = requests.Session()
+        session_obj.cookies.update(session['qb_session'])
+        
+        try:
+            response = session_obj.get(
+                f"{app.config['QB_URL']}/api/v2/torrents/properties",
+                params={'hash': hash_val},
+                headers=app.config.get("BASE_HEADERS", {})
+            )
+            response.raise_for_status()
+            properties = response.json()
+            # must make sure save_path matches between qBittorrent and MouseSearch 
+            content_path = Path(QB_PATH) / properties.get('name')
+            # content_path = Path(properties.get('save_path')) / properties.get('name')
+
+            # 3. Define paths and perform the linking
+            organized_path = Path(ORGANIZED_PATH)
+            
+            torrent_meta = metadata[hash_val]
+            s_author = sanitize_filename(torrent_meta['author'])
+            s_title = sanitize_filename(torrent_meta['title'])
+            dest_path = organized_path / s_author / s_title
+
+            if not content_path.exists():
+                return False, f"Source path does not exist: {content_path}"
+            
+            dest_path.mkdir(parents=True, exist_ok=True)
+            
+            files_linked = 0
+            audio_extensions = ['.m4b', '.mp3', '.flac', '.ogg', '.opus', '.m4a']
+
+            # ✅ FIXED: handle directory vs file correctly
+            if content_path.is_dir():
+                source_files = content_path.rglob('*')
+            else:
+                source_files = [content_path]
+
+            for source_file in source_files:
+                if source_file.is_file() and source_file.suffix.lower() in audio_extensions:
+                    dest_file = dest_path / source_file.name
+                    if not dest_file.exists():
+                        os.link(source_file, dest_file)
+                        files_linked += 1
+
+            # 4. Update metadata to mark as organized only if files were actually linked
+            if files_linked > 0:
+                metadata[hash_val]['organized'] = True
+                save_metadata(metadata)
+                return True, f"SUCCESS: Organized '{s_title}' ({files_linked} files linked)."
+            else:
+                # Increment retry counter for failed attempts
+                metadata[hash_val]['retry_count'] = metadata[hash_val].get('retry_count', 0) + 1
+                save_metadata(metadata)
+                return False, f"No compatible audio files found to link for '{s_title}' (attempt {metadata[hash_val]['retry_count']}/3)."
+
+        except RequestException as e:
+            return False, f"An API error occurred during organization: {e}"
+
+    @app.route('/organize/<hash_val>', methods=['POST'])
+    def organize_torrent_webhook(hash_val):
+        """Webhook endpoint called by qBittorrent on torrent completion."""
+        app.logger.info(f"Received webhook organization request for hash: {hash_val}")
+        with app.app_context():
+            success, message = _perform_organization(hash_val)
+        
+        if success:
+            app.logger.info(message)
+            return jsonify({'status': 'success', 'message': message}), 200
+        else:
+            app.logger.error(message)
+            return jsonify({'status': 'error', 'message': message}), 500
+
+    @scheduler.task('interval', id='organize_safety_net_job', hours=1, misfire_grace_time=900)
+    def check_for_unorganized_torrents():
+        """Periodically checks for any torrents that were missed by the webhook."""
+        with app.app_context():
+            app.logger.info("Running scheduled job: Safety net for unorganized torrents.")
+            metadata = load_metadata()
+            unorganized_hashes = [h for h, m in metadata.items() if not m.get('organized', False)]
+
+            if not unorganized_hashes:
+                app.logger.info("Safety net job: No unorganized torrents found.")
+                return
+
+            app.logger.info(f"Safety net job: Found {len(unorganized_hashes)} unorganized torrent(s). Processing now.")
+            for hash_val in unorganized_hashes:
+                success, message = _perform_organization(hash_val)
+                if success:
+                    app.logger.info(f"Safety net: {message}")
+                else:
+                    app.logger.error(f"Safety net failed for {hash_val}: {message}")
+else:
+    app.logger.info("AUTO_ORGANIZE is disabled. Skipping organization feature setup.")
+
+    
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the Flask app.")
     parser.add_argument("--host", default="127.0.0.1", help="Host address.")
