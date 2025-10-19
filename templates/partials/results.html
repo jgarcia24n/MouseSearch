@@ -41,6 +41,11 @@
                 <i class="bi bi-collection"></i> {{ result.series_display }}
             </div>
             {% endif %}
+            {% if result.author_info %}
+            <div class="col-6" title="Author">
+                <i class="bi bi-person"></i> {{ result.author_info }}
+            </div>
+            {% endif %}
             <div class="col-6" title="Narrator">
                 <i class="bi bi-mic"></i> {{ result.narrator_info or "N/A" }}
             </div>
