@@ -18,17 +18,29 @@ import re
 from pathlib import Path
 
 import logging # for hypercorn logging
+import sys # for stderr logging
 
 from language_dict import language_dict
 
 # --- SCHEDULER AND STATE SETUP ---
 app = Quart(__name__)
 
+# Configure logging to stderr so it shows up in Hypercorn output
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    stream=sys.stderr
+)
+
 if __name__ != '__main__':
     # Hypercorn logging setup (similar to gunicorn)
     logger = logging.getLogger('hypercorn.error')
     app.logger.handlers = logger.handlers
-    app.logger.setLevel(logger.level)
+    app.logger.setLevel(logging.INFO)
+else:
+    # When running directly, also log to stderr
+    app.logger.setLevel(logging.INFO)
 
 # Initialize AsyncIO scheduler for Quart (but don't start it yet)
 scheduler = AsyncIOScheduler()
@@ -631,7 +643,7 @@ async def proxy_thumbnail():
                 "Cache-Control": "public, max-age=31536000, immutable",
                 "Content-Type": response.headers.get("Content-Type", "image/jpeg")
             }
-            
+            app.logger.info(f"Thumbnail proxy served for URL: {url}")
             return Response(
                 response.content,
                 headers=cache_headers
