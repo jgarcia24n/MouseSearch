@@ -22,9 +22,49 @@ import sys # for stderr logging
 
 from language_dict import language_dict
 
+import asyncio
+import httpx
+from httpx import Limits, Timeout, AsyncHTTPTransport
+
+
+        
+
 # --- SCHEDULER AND STATE SETUP ---
 app = Quart(__name__)
 
+UPSTREAM_CLIENT: httpx.AsyncClient | None = None
+
+@app.before_serving
+async def startup():
+    await load_new_app_config()
+    # Start scheduler...
+    if not scheduler.running:
+        scheduler.start()
+        app.logger.info("AsyncIOScheduler started")
+
+    # ---- Create a single shared httpx client ----
+    global UPSTREAM_CLIENT
+    transport = AsyncHTTPTransport(http2=True, retries=2)
+    limits = Limits(max_connections=200, max_keepalive_connections=50, keepalive_expiry=120.0)
+    timeout = Timeout(connect=5.0, read=15.0, write=15.0, pool=None)
+    UPSTREAM_CLIENT = httpx.AsyncClient(transport=transport, limits=limits, timeout=timeout)
+    app.logger.info("Shared httpx AsyncClient initialized")
+
+@app.after_serving
+async def shutdown():
+    if scheduler.running:
+        scheduler.shutdown()
+        app.logger.info("AsyncIOScheduler shutdown")
+
+    # ---- Close the shared client ----
+    global UPSTREAM_CLIENT
+    if UPSTREAM_CLIENT is not None:
+        await UPSTREAM_CLIENT.aclose()
+        UPSTREAM_CLIENT = None
+        app.logger.info("Shared httpx AsyncClient closed")
+        
+        
+        
 # Configure logging to stderr so it shows up in Hypercorn output
 logging.basicConfig(
     level=logging.INFO,
@@ -627,30 +667,56 @@ async def mam_search():
 async def index():
     return await render_template("index.html", **app.config)
 
+FETCH_SEMAPHORE = asyncio.Semaphore(200)  # tune if needed
+
 @app.route("/proxy_thumbnail")
 async def proxy_thumbnail():
     url = request.args.get("url")
     if not url:
         return "No URL provided", 400
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, cookies=mam_session_cookies, timeout=10)
-            response.raise_for_status()
-            
-            # Set cache for 1 year and mark as immutable
-            cache_headers = {
-                "Cache-Control": "public, max-age=31536000, immutable",
-                "Content-Type": response.headers.get("Content-Type", "image/jpeg")
-            }
-            app.logger.info(f"Thumbnail proxy served for URL: {url}")
-            return Response(
-                response.content,
-                headers=cache_headers
-            )
-    except RequestError as e:
-        app.logger.error(f"Thumbnail proxy failed for URL {url}. Reason: {e}")
-        return "Failed to fetch image", 500
+    if UPSTREAM_CLIENT is None:
+        return "Upstream client not ready", 503
+
+    # Forward only headers useful for conditional/partial requests
+    fwd_headers = {}
+    for h in ("If-None-Match", "If-Modified-Since", "Range"):
+        v = request.headers.get(h)
+        if v:
+            fwd_headers[h] = v
+
+    # If the CDN images are PUBLIC, set cookies=None to maximize CDN cache hits
+    upstream_cookies = mam_session_cookies  # or: None
+
+    async with FETCH_SEMAPHORE:
+        # Build request and keep the response OPEN until we finish streaming it.
+        req = UPSTREAM_CLIENT.build_request("GET", url, headers=fwd_headers, cookies=upstream_cookies)
+        r = await UPSTREAM_CLIENT.send(req, stream=True)
+
+        # Prepare downstream headers
+        passthrough = {}
+        for h in (
+            "Content-Type", "Content-Length", "Cache-Control",
+            "ETag", "Last-Modified", "Accept-Ranges", "Content-Range"
+        ):
+            hv = r.headers.get(h)
+            if hv:
+                passthrough[h] = hv
+        passthrough.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+
+        # 304 passthrough (no body)
+        if r.status_code == 304:
+            await r.aclose()
+            return Response(status=304, headers=passthrough)
+
+        async def body():
+            try:
+                async for chunk in r.aiter_bytes():
+                    yield chunk
+            finally:
+                # CRITICAL: close upstream stream no matter what (client disconnects, errors, etc.)
+                await r.aclose()
+
+        return Response(body(), status=r.status_code, headers=passthrough)
 
 
 @app.route("/update_settings", methods=["POST"])
