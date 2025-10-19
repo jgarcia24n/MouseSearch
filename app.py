@@ -584,10 +584,15 @@ def proxy_thumbnail():
         response = requests.get(url, cookies=mam_session_cookies, stream=True, timeout=10)
         response.raise_for_status()
         
+        # Set cache for 1 year and mark as immutable
+        cache_headers = {
+            "Cache-Control": "public, max-age=31536000, immutable"
+        }
+        
         return Response(
             response.iter_content(chunk_size=1024),
             content_type=response.headers.get("Content-Type"),
-            headers={"Cache-Control": "public, max-age=86400"}
+            headers=cache_headers
         )
     except RequestException as e:
         app.logger.error(f"Thumbnail proxy failed for URL {url}. Reason: {e}")
