@@ -15,6 +15,7 @@
                 loading="lazy" style="object-fit: contain;">
         </a>
     </div>
+
     <div class="col-6 col-md-5 pb-3 mb-0 small lh-sm">
         <div class="d-flex justify-content-between">
             <a href="https://www.myanonamouse.net/t/{{ result.id }}" target="_blank">
@@ -22,7 +23,7 @@
             </a>
         </div>
         
-        <div class="my-1">
+        <div class="my-2">
             {% if result.my_snatched == 1 %}
             <span class="badge bg-success">Downloaded</span>
             {% endif %}
@@ -32,20 +33,33 @@
             {% if result.free == 1 or result.personal_freeleech == 1 %}
             <span class="badge bg-info text-dark">Freeleech</span>
             {% endif %}
-          <!--  <span class="badge bg-secondary">{{ result.lang_code }}</span> 
-            -->
         </div>
 
-        {% if result.series_display %}
-        <span class="d-block"><strong>Series:</strong> {{ result.series_display }}</span>
-        {% endif %}
-        
-        <span class="d-block"><strong>Narrator:</strong> {{ result.narrator_info or "N/A" }}</span>
-        <span class="d-block"><strong>File Type:</strong> {{ result.filetype }}</span>
-        <span class="d-block"><strong>Size:</strong> {{ result.size }}</span>
-        <span class="d-block"><strong>Added:</strong> {{ result.added }}</span>
-        <span class="d-block"><strong>S/L:</strong> {{ result.seeders }}/{{ result.leechers }}</span>
-        <span class="d-block"><strong>Score:</strong> {{ result.score }}</span>
+        <div class="row g-2 torrent-details">
+            {% if result.series_display %}
+            <div class="col-12" data-bs-toggle="tooltip" title="Series">
+                <i class="bi bi-collection"></i> {{ result.series_display }}
+            </div>
+            {% endif %}
+            <div class="col-6" data-bs-toggle="tooltip" title="Narrator">
+                <i class="bi bi-mic"></i> {{ result.narrator_info or "N/A" }}
+            </div>
+            <div class="col-6" data-bs-toggle="tooltip" title="File Type">
+                <i class="bi bi-file-earmark-music"></i> {{ result.filetype }}
+            </div>
+            <div class="col-6" data-bs-toggle="tooltip" title="Size">
+                <i class="bi bi-hdd"></i> {{ result.size }}
+            </div>
+            <div class="col-6" data-bs-toggle="tooltip" title="Date Added">
+                <i class="bi bi-calendar3"></i> {{ result.added }}
+            </div>
+            <div class="col-6" data-bs-toggle="tooltip" title="Seeders / Leechers">
+                <i class="bi bi-people"></i> {{ result.seeders }}/{{ result.leechers }}
+            </div>
+            <div class="col-6" data-bs-toggle="tooltip" title="Relevance Score">
+                <i class="bi bi-star"></i> {{ result.score }}
+            </div>
+        </div>
     </div>
     <div class="col-12 col-md-3 py-2 d-flex flex-column justify-content-center">
     {% if result.download_link %}

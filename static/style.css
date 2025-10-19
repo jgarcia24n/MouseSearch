@@ -14,3 +14,14 @@ body {
 .results-container-wrapper {
   scroll-margin-top: 50px;
 }
+
+.torrent-details .col-6, .torrent-details .col-12 {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem; /* Adds space between icon and text */
+}
+
+.torrent-details i {
+    color: var(--bs-secondary-color); /* Makes icons slightly less prominent than text */
+    font-size: 1.1em;
+}
