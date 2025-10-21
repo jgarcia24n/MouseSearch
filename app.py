@@ -657,7 +657,6 @@ async def mam_search():
             json_data = response.json()
             results = json_data.get("data", [])
 
-            # --- THIS IS THE FIX ---
             # The API returns a 'dl' hash. We must construct the full download_link for the template.
             base_dl_url = f"{app.config['MAM_API_URL']}/tor/download.php/"
             for item in results:
@@ -994,7 +993,7 @@ else:
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the Quart app.")
-    parser.add_argument("--host", default="127.0.0.1", help="Host address.")
+    parser.add_argument("--host", default="0.0.0.0", help="Host address.")
     parser.add_argument("--port", default=5000, type=int, help="Port number.")
     args = parser.parse_args()
     app.run(host=args.host, port=args.port, debug=True, use_reloader=False)

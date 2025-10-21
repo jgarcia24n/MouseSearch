@@ -8,7 +8,7 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt hypercorn
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application code to the working directory
 COPY app.py language_dict.py ./
@@ -22,17 +22,9 @@ EXPOSE 5000
 ENV ADDRESS=0.0.0.0
 ENV PORT=5000
 
-# You may define environment variables here or elsewhere
-# You should replace these with your actual configuration at runtime
-# ENV FLASK_SECRET_KEY="a-very-secret-key"
-# ENV MAM_API_URL="https://www.myanonamouse.net"
-# ENV QB_URL="http://localhost:8080"
-# ENV QB_CATEGORY=""
-# ENV QB_USERNAME="admin"
-# ENV QB_PASSWORD=""
-# ENV MAM_ID=""
-# ENV CF_ACCESS_CLIENT_ID=""
-# ENV CF_ACCESS_CLIENT_SECRET=""
-
-# Run app.py when the container launches
-CMD ["sh", "-lc", "exec hypercorn --bind ${ADDRESS}:${PORT} --workers 1 --worker-class asyncio --access-logfile /dev/null --error-logfile - --log-level info app:app"]
+CMD exec hypercorn --bind ${ADDRESS}:${PORT} \
+     --workers 1 \
+     --worker-class asyncio \
+     --access-logfile - \
+     --error-logfile - \
+     --log-level info app:app
