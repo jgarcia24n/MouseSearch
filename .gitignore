@@ -7,6 +7,7 @@ reloadService.sh
 
 # Custom
 buildImage.sh
+compose.yaml
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -134,9 +135,7 @@ celerybeat.pid
 .github/
 .env
 .envxxx
-config.json
-ip_state.json
-metadata.json
+data/
 .venv
 env/
 venv/

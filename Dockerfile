@@ -19,8 +19,8 @@ COPY templates ./templates
 EXPOSE 5000
 
 # Production env
-ENV PORT=5000 \
-    FLASK_ENV=production
+ENV ADDRESS=0.0.0.0
+ENV PORT=5000
 
 # You may define environment variables here or elsewhere
 # You should replace these with your actual configuration at runtime
@@ -31,9 +31,8 @@ ENV PORT=5000 \
 # ENV QB_USERNAME="admin"
 # ENV QB_PASSWORD=""
 # ENV MAM_ID=""
-# ENV MAM_UID=""
 # ENV CF_ACCESS_CLIENT_ID=""
 # ENV CF_ACCESS_CLIENT_SECRET=""
 
 # Run app.py when the container launches
-CMD ["sh", "-lc", "exec hypercorn --bind 0.0.0.0:${PORT} --workers 1 --worker-class asyncio --access-logfile /dev/null --error-logfile - --log-level info app:app"]
+CMD ["sh", "-lc", "exec hypercorn --bind ${ADDRESS}:${PORT} --workers 1 --worker-class asyncio --access-logfile /dev/null --error-logfile - --log-level info app:app"]

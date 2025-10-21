@@ -1,14 +1,12 @@
 # app.py - Quart (async) version
-from quart import Quart, request, render_template, Response, make_response, jsonify, session
+from quart import Quart, request, render_template, Response, jsonify, session
 import httpx
 import json
 import argparse
 import os
-import atexit
-import math
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from httpx import RequestError
+from httpx import RequestError, Limits, Timeout, AsyncHTTPTransport
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import hashlib
@@ -23,8 +21,6 @@ import sys # for stderr logging
 from language_dict import language_dict
 
 import asyncio
-import httpx
-from httpx import Limits, Timeout, AsyncHTTPTransport
 
 
         
@@ -88,7 +84,7 @@ scheduler = AsyncIOScheduler()
 @app.before_serving
 async def startup():
     """Start the scheduler and load config when the app starts serving requests."""
-    # Load config and fetch MAM_UID if needed
+    # Load config
     await load_new_app_config()
     
     # Start the scheduler
@@ -114,26 +110,26 @@ FALLBACK_CONFIG = {
     "QB_USERNAME": "admin",
     "QB_PASSWORD": "",
     "MAM_ID": "",
-    "MAM_UID": "",
     "CF_ACCESS_CLIENT_ID": None,
     "CF_ACCESS_CLIENT_SECRET": None,
-    "METADATA_FILE": "/app/data/metadata.json",
-    "IP_STATE_FILE": "/app/data/ip_state.json", 
-    "CONFIG_FILE": "/app/data/config.json",
+    "DATA_PATH": "./data",
     "ORGANIZED_PATH": "/downloads/organized",
     "QB_PATH": "/downloads/torrents/organize-these/audiobooks",
     "AUTO_ORGANIZE": False,
 }
 
-# Load file paths from environment variables or use defaults
-METADATA_FILE = os.getenv("METADATA_FILE", FALLBACK_CONFIG["METADATA_FILE"])
-ORGANIZED_PATH = os.getenv("ORGANIZED_PATH", FALLBACK_CONFIG["ORGANIZED_PATH"])
-QB_PATH = os.getenv("QB_PATH", FALLBACK_CONFIG["QB_PATH"])
-IP_STATE_FILE = os.getenv("IP_STATE_FILE", FALLBACK_CONFIG["IP_STATE_FILE"])
-CONFIG_FILE = os.getenv("CONFIG_FILE", FALLBACK_CONFIG["CONFIG_FILE"])
+# Set up data directory and paths
+DATA_PATH = Path(os.getenv("DATA_PATH", FALLBACK_CONFIG["DATA_PATH"])).resolve()
+ORGANIZED_PATH = Path(os.getenv("ORGANIZED_PATH", FALLBACK_CONFIG["ORGANIZED_PATH"])).resolve()
+QB_PATH = Path(os.getenv("QB_PATH", FALLBACK_CONFIG["QB_PATH"])).resolve()
 
-ORGANIZED_PATH = Path(os.getenv("ORGANIZED_PATH", "/downloads/organized")).resolve()
-QB_PATH = Path(os.getenv("QB_PATH", "/downloads/torrents/organize-these/audiobooks")).resolve()
+# Create data directory if it doesn't exist
+DATA_PATH.mkdir(parents=True, exist_ok=True)
+
+# Define JSON file paths within DATA_PATH
+CONFIG_FILE = DATA_PATH / "config.json"
+METADATA_FILE = DATA_PATH / "metadata.json"
+IP_STATE_FILE = DATA_PATH / "ip_state.json"
 
 def load_config():
     config = FALLBACK_CONFIG.copy()
@@ -159,29 +155,8 @@ def save_config(config):
         json.dump(config_to_save, f, indent=4)
 
 async def load_new_app_config():
-    """Reload config and automatically fetch MAM_UID if it's missing."""
+    """Reload config from files and environment."""
     new_config = load_config()
-
-    # If MAM_UID is missing but MAM_ID is present, try to fetch it
-    if not new_config.get("MAM_UID") and new_config.get("MAM_ID"):
-        app.logger.info("MAM_UID is not set. Attempting to fetch from API...")
-        try:
-            api_url = new_config.get("MAM_API_URL", FALLBACK_CONFIG["MAM_API_URL"])
-            cookies = {"mam_id": new_config["MAM_ID"]}
-            async with httpx.AsyncClient() as client:
-                response = await client.get(f"{api_url}/jsonLoad.php", cookies=cookies, timeout=10)
-                response.raise_for_status()
-                data = response.json()
-                
-                if uid := data.get("uid"):
-                    uid_str = str(uid)
-                    app.logger.info(f"Successfully fetched MAM_UID: {uid_str}")
-                    new_config["MAM_UID"] = uid_str
-                    save_config(new_config) # Save the newly fetched UID
-                else:
-                    app.logger.warning("Fetched data from MAM API, but 'uid' key was not found.")
-        except (RequestError, json.JSONDecodeError) as e:
-            app.logger.error(f"Failed to fetch MAM_UID from API: {e}")
 
     # Continue loading config into the app
     app.secret_key = new_config["FLASK_SECRET_KEY"]
@@ -194,9 +169,9 @@ async def load_new_app_config():
     app.config["BASE_HEADERS"] = {k: v for k, v in app.config["BASE_HEADERS"].items() if v is not None}
     
     global mam_session_cookies
-    mam_session_cookies = {"mam_id": app.config.get("MAM_ID"), "uid": app.config.get("MAM_UID")}
+    mam_session_cookies = {"mam_id": app.config.get("MAM_ID")}
 
-# Load initial config synchronously (without MAM_UID fetch)
+# Load initial config synchronously
 initial_config = load_config()
 app.secret_key = initial_config["FLASK_SECRET_KEY"]
 app.config.update(initial_config)
@@ -204,7 +179,7 @@ app.config["BASE_HEADERS"] = {
     "CF-Access-Client-Id": initial_config.get("CF_ACCESS_CLIENT_ID"),
     "CF-Access-Client-Secret": initial_config.get("CF_ACCESS_CLIENT_SECRET"),
 }
-mam_session_cookies = {"mam_id": initial_config.get("MAM_ID"), "uid": initial_config.get("MAM_UID")}
+mam_session_cookies = {"mam_id": initial_config.get("MAM_ID")}
 
 # --- IP STATE MANAGEMENT AND DYNAMIC IP UPDATER ---
 
@@ -305,7 +280,7 @@ def update_cookies(response):
 async def login_mam():
     url = app.config.get("MAM_API_URL")
     if not url: return False
-    if not all([mam_session_cookies.get("mam_id"), mam_session_cookies.get("uid")]):
+    if not mam_session_cookies.get("mam_id"):
         return False
     async with httpx.AsyncClient() as client:
         response = await client.get(f"{url}/jsonLoad.php", cookies=mam_session_cookies)
@@ -641,7 +616,7 @@ def rank_results(results):
 @app.route('/mam/search', methods=['GET'])
 async def mam_search():
     if not await login_mam(): 
-        return await render_template("partials/results.html", error_message="Login to MyAnonamouse failed. Check your MAM_ID and MAM_UID cookies in settings.")
+        return await render_template("partials/results.html", error_message="Login to MyAnonamouse failed. Check your MAM_ID cookie in settings.")
     query = request.args.get("query", "")
     if not query: 
         return await render_template("partials/results.html", results=[])

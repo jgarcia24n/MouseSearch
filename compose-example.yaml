@@ -1,0 +1,25 @@
+services:
+  mousesearch:
+    image: sevenlayercookie/mousesearch:latest
+    container_name: mousesearch
+    ports:
+      - "5000:5000"
+    env_file: .env
+    volumes:
+      - ./data:/data  # location that config and state files will be stored
+      # - /downloads:/downloads # if using auto-organize
+
+ # Recommended File Structure (if using auto-organize)
+
+ #                       downloads
+ #                       ├── organized
+ #                       │   ├── audiobooks
+ #                       │   └── ebooks
+ #                       └── torrents
+ #                           ├── dont-organize-these
+ #                           └── organize-these
+ #                               ├── audiobooks
+ #                               └── ebooks
+
+
+
