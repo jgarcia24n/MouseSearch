@@ -75,6 +75,7 @@
                     data-torrent-url="{{ result.download_link | safe }}"
                     data-author="{{ result.author_info }}"
                     data-title="{{ result.title }}"
+                    data-id="{{ result.id }}"
                     {% if QB_STATUS != 'CONNECTED' %}disabled{% endif %}>
                 Add to qBittorrent
             </button>

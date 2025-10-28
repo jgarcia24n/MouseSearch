@@ -389,6 +389,7 @@ async def qb_add_torrent():
     torrent_url = incoming_data.get('torrent_url') or incoming_data.get('url')
     author = incoming_data.get('author', 'Unknown Author')
     title = incoming_data.get('title', 'Unknown Title')
+    id = incoming_data.get('id', '0')
     
     auto_organize_warning = None  # Track if hash calculation failed
     
@@ -400,6 +401,7 @@ async def qb_add_torrent():
         else:
             metadata = load_metadata()
             metadata[hash_val] = {
+                "id": id,
                 "author": author,
                 "title": title,
                 "added_on": datetime.now().isoformat(),
