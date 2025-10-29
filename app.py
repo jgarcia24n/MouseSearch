@@ -115,7 +115,8 @@ FALLBACK_CONFIG = {
     "DATA_PATH": "./data",
     "ORGANIZED_PATH": "/downloads/organized",
     "QB_PATH": "/downloads/torrents/organize-these/audiobooks",
-    "AUTO_ORGANIZE": False,
+    "AUTO_ORGANIZE_ON_ADD": False,
+    "AUTO_ORGANIZE_ON_SCHEDULE": False,
 }
 
 # Set up data directory and paths
@@ -137,8 +138,12 @@ def load_config():
     env_config_filtered = {k: v for k, v in env_config.items() if v is not None}
     config.update(env_config_filtered)
     
-    auto_organize_str = str(config.get("AUTO_ORGANIZE", "false")).lower()
-    config["AUTO_ORGANIZE"] = auto_organize_str in ['true', '1', 'yes', 'on']
+    # Handle new configuration options
+    auto_organize_on_add_str = str(config.get("AUTO_ORGANIZE_ON_ADD", "false")).lower()
+    config["AUTO_ORGANIZE_ON_ADD"] = auto_organize_on_add_str in ['true', '1', 'yes', 'on']
+    
+    auto_organize_on_schedule_str = str(config.get("AUTO_ORGANIZE_ON_SCHEDULE", "false")).lower()
+    config["AUTO_ORGANIZE_ON_SCHEDULE"] = auto_organize_on_schedule_str in ['true', '1', 'yes', 'on']
     
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r") as f:
@@ -393,11 +398,11 @@ async def qb_add_torrent():
     
     auto_organize_warning = None  # Track if hash calculation failed
     
-    if app.config.get("AUTO_ORGANIZE"):
+    if app.config.get("AUTO_ORGANIZE_ON_ADD"):
         hash_val = await calculate_torrent_hash_from_url(torrent_url)
         if not hash_val:
-            auto_organize_warning = "Unable to calculate torrent hash - auto-organization will not work for this torrent."
-            app.logger.warning(f"AUTO_ORGANIZE is enabled, but could not calculate hash for {torrent_url}.")
+            auto_organize_warning = "Unable to calculate torrent hash - auto-organization on add will not work for this torrent."
+            app.logger.warning(f"AUTO_ORGANIZE_ON_ADD is enabled, but could not calculate hash for {torrent_url}.")
         else:
             metadata = load_metadata()
             metadata[hash_val] = {
@@ -774,8 +779,8 @@ async def update_settings():
     
     return jsonify({"status": "success", "message": "Settings updated! A manual IP update has been triggered."})
 
-if app.config.get("AUTO_ORGANIZE"):
-    app.logger.info("AUTO_ORGANIZE is enabled. Registering webhook and safety net job.")
+if app.config.get("AUTO_ORGANIZE_ON_ADD") or app.config.get("AUTO_ORGANIZE_ON_SCHEDULE"):
+    app.logger.info("Auto-organization is enabled. Registering webhook and/or scheduled job.")
 
     async def _perform_organization(hash_val: str) -> tuple[bool, str]:
         """
@@ -988,9 +993,14 @@ if app.config.get("AUTO_ORGANIZE"):
                 else:
                     app.logger.error(f"Safety net failed for {hash_val}: {message}")
     
-    scheduler.add_job(check_for_unorganized_torrents, 'interval', hours=1, id='organize_safety_net_job', replace_existing=True)
+    # Only schedule the periodic job if AUTO_ORGANIZE_ON_SCHEDULE is enabled
+    if app.config.get("AUTO_ORGANIZE_ON_SCHEDULE"):
+        scheduler.add_job(check_for_unorganized_torrents, 'interval', hours=1, id='organize_safety_net_job', replace_existing=True)
+        app.logger.info("Scheduled auto-organization job registered (runs every hour).")
+    else:
+        app.logger.info("AUTO_ORGANIZE_ON_SCHEDULE is disabled. No scheduled organization job will run.")
 else:
-    app.logger.info("AUTO_ORGANIZE is disabled. Skipping organization feature setup.")
+    app.logger.info("Auto-organization is disabled. Skipping organization feature setup.")
 
     
 if __name__ == "__main__":

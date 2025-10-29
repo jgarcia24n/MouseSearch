@@ -26,6 +26,8 @@ const torrentHashMap = {};
 // New batch polling system
 const activeHashes = new Set();
 const hashToElementMap = new Map(); // Maps hash -> resultItem element
+const hashRetryCount = new Map(); // Maps hash -> number of retries for "not found" status
+const MAX_RETRIES = 10; // Maximum retries before giving up (20 seconds with 2s interval)
 let batchPollingInterval = null;
 
 async function getTorrentHash(torrentId, torrentUrl) {
@@ -104,15 +106,32 @@ async function performBatchPoll() {
             
             const torrentData = torrents[hash];
             if (!torrentData) {
-                // Torrent not found in qBittorrent
-                const statusContainer = resultItem.querySelector('.torrent-status-container');
-                if (statusContainer) {
-                    statusContainer.innerHTML = `<span class="badge bg-danger text-wrap">Torrent not found in qBittorrent</span>`;
+                // Torrent not found in qBittorrent - implement retry logic
+                const retries = hashRetryCount.get(hash) || 0;
+                if (retries < MAX_RETRIES) {
+                    // Increment retry count and show waiting message
+                    hashRetryCount.set(hash, retries + 1);
+                    const statusContainer = resultItem.querySelector('.torrent-status-container');
+                    if (statusContainer) {
+                        const waitTime = Math.ceil((MAX_RETRIES - retries) * 2); // Rough estimate of remaining wait time
+                        statusContainer.innerHTML = `<span class="badge bg-warning text-wrap">Waiting for qBittorrent to process torrent... (${waitTime}s)</span>`;
+                    }
+                    console.log(`[BATCH-POLL] Torrent ${hash} not found, retry ${retries + 1}/${MAX_RETRIES}`);
+                    continue; // Keep polling
+                } else {
+                    // Max retries reached, give up
+                    const statusContainer = resultItem.querySelector('.torrent-status-container');
+                    if (statusContainer) {
+                        statusContainer.innerHTML = `<span class="badge bg-danger text-wrap">Torrent not found in qBittorrent</span>`;
+                    }
+                    console.log(`[BATCH-POLL] Giving up on torrent ${hash} after ${MAX_RETRIES} retries`);
+                    removeHashFromPolling(hash);
+                    continue;
                 }
-                removeHashFromPolling(hash);
-                continue;
             }
             
+            // Reset retry count since torrent was found
+            hashRetryCount.delete(hash);
             updateTorrentUI(hash, torrentData, resultItem);
         }
         
@@ -158,6 +177,7 @@ function addHashToPolling(hash, resultItem) {
     console.log(`[BATCH-POLL] Adding hash ${hash} to active polling`);
     activeHashes.add(hash);
     hashToElementMap.set(hash, resultItem);
+    hashRetryCount.delete(hash); // Reset retry count when starting fresh
     startBatchPolling();
 }
 
@@ -168,6 +188,7 @@ function removeHashFromPolling(hash) {
     console.log(`[BATCH-POLL] Removing hash ${hash} from active polling`);
     activeHashes.delete(hash);
     hashToElementMap.delete(hash);
+    hashRetryCount.delete(hash); // Clean up retry count
     if (activeHashes.size === 0) {
         stopBatchPolling();
     }
@@ -411,6 +432,7 @@ document.addEventListener("DOMContentLoaded", function () {
         stopBatchPolling();
         activeHashes.clear();
         hashToElementMap.clear();
+        hashRetryCount.clear();
 
         const queryParams = new URLSearchParams(new FormData(searchForm)).toString();
 

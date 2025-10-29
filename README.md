@@ -57,9 +57,10 @@ Open the `.env` file you just created and fill in the details.
 | `QB_PASSWORD` | **Yes** | Your qBittorrent password. |
 | `QB_CATEGORY` | No | (Optional) A default category to assign to downloads (e.g., `audiobooks`). |
 | `DATA_PATH` | No | Directory path for storing app data files (config.json, metadata.json, ip_state.json). Defaults to `./data`. |
-| `AUTO_ORGANIZE` | No | Set to `true` to enable the beta auto-organization feature. Defaults to `false`. |
-| `ORGANIZED_PATH` | If `AUTO_ORGANIZE` is `true` | The *container* path for your organized library (e.g., `/downloads/organized/audiobooks`). |
-| `QB_PATH` | If `AUTO_ORGANIZE` is `true` | The *container* path where qBittorrent saves completed files for this category (e.g., `/downloads/torrents/organize-these/audiobooks`). |
+| `AUTO_ORGANIZE_ON_ADD` | No | Set to `true` to enable auto-organization when torrents are added. Defaults to `false`. |
+| `AUTO_ORGANIZE_ON_SCHEDULE` | No | Set to `true` to enable scheduled auto-organization (runs every hour). Defaults to `false`. |
+| `ORGANIZED_PATH` | If auto-organization is enabled | The *container* path for your organized library (e.g., `/downloads/organized/audiobooks`). |
+| `QB_PATH` | If auto-organization is enabled | The *container* path where qBittorrent saves completed files for this category (e.g., `/downloads/torrents/organize-these/audiobooks`). |
 
 **How to find your `MAM_ID`:**
 1.  Log in to MyAnonamouse in your browser.
@@ -135,11 +136,23 @@ This feature is designed to automate your media library. When enabled, it hard-l
 
 It **uses hard links**, not copies. This means it takes up **no additional disk space**.
 
+### Configuration Options
+
+You can now control two separate aspects of auto-organization:
+
+- **`AUTO_ORGANIZE_ON_ADD`**: Automatically organize files when torrents are added to qBittorrent
+- **`AUTO_ORGANIZE_ON_SCHEDULE`**: Periodically check for unorganized files (runs every hour)
+
+These can be enabled independently of each other:
+- Enable only `AUTO_ORGANIZE_ON_ADD` for immediate organization when files are added
+- Enable only `AUTO_ORGANIZE_ON_SCHEDULE` for batch processing on a schedule
+- Enable both for maximum coverage (recommended)
+
 ### How It Works
 
-1.  When you add a torrent, MouseSearch calculates its infohash and saves the Author/Title metadata to `/app/data/metadata.json`.
-2.  The app includes a scheduler that runs every hour (and a webhook for qBittorrent's "Run external program on torrent completion").
-3.  This job checks `metadata.json` for any torrents marked as `organized: false`.
+1.  When `AUTO_ORGANIZE_ON_ADD` is enabled and you add a torrent, MouseSearch calculates its infohash and saves the Author/Title metadata to `/app/data/metadata.json`.
+2.  When `AUTO_ORGANIZE_ON_SCHEDULE` is enabled, the app includes a scheduler that runs every hour to check for unorganized files.
+3.  Both methods check `metadata.json` for any torrents marked as `organized: false`.
 4.  For each unorganized torrent, it:
     a.  Asks qBittorrent for its file path (e.g., `/downloads/torrents/organize-these/audiobooks/Some.Book.by.Some.Author`).
     b.  Sanitizes the Author ("Some Author") and Title ("Some Book").
