@@ -117,6 +117,7 @@ FALLBACK_CONFIG = {
     "QB_PATH": "/downloads/torrents/organize-these/audiobooks",
     "AUTO_ORGANIZE_ON_ADD": False,
     "AUTO_ORGANIZE_ON_SCHEDULE": False,
+    "AUTO_ORGANIZE_INTERVAL_HOURS": 1,
     "ENABLE_DYNAMIC_IP_UPDATE": False,
     "DYNAMIC_IP_UPDATE_INTERVAL_HOURS": 3
 }
@@ -280,7 +281,7 @@ async def check_and_update_ip():
         await force_update_ip()
 
 if app.config.get("ENABLE_DYNAMIC_IP_UPDATE"):
-    interval_hours = app.config.get("DYNAMIC_IP_UPDATE_INTERVAL_HOURS", 3)
+    interval_hours = int(app.config.get("DYNAMIC_IP_UPDATE_INTERVAL_HOURS", 3))
     # Schedule the IP check to run at the configured interval and 5 seconds after startup
     scheduler.add_job(check_and_update_ip, 'interval', hours=interval_hours, id='ip_check_job', replace_existing=True)
     scheduler.add_job(check_and_update_ip, 'date', run_date=datetime.now() + timedelta(seconds=5), id='initial_ip_check_job')
@@ -766,9 +767,23 @@ async def update_settings():
     form = await request.form
     config_to_update = app.config.copy()
     
+    # List of boolean checkbox fields
+    boolean_fields = {
+        "AUTO_ORGANIZE_ON_ADD",
+        "AUTO_ORGANIZE_ON_SCHEDULE", 
+        "ENABLE_DYNAMIC_IP_UPDATE"
+    }
+    
+    # Process all config keys
     for key in FALLBACK_CONFIG.keys():
-        if key in form:
+        if key in boolean_fields:
+            # Checkboxes: present in form = True, absent = False
+            config_to_update[key] = key in form
+        elif key in form:
+            # Regular fields: use form value if present
             config_to_update[key] = form[key]
+    
+    # Special handling for password (only update if provided)
     if form.get("QB_PASSWORD"):
         config_to_update["QB_PASSWORD"] = form.get("QB_PASSWORD")
 
@@ -1006,8 +1021,9 @@ if app.config.get("AUTO_ORGANIZE_ON_ADD") or app.config.get("AUTO_ORGANIZE_ON_SC
     
     # Only schedule the periodic job if AUTO_ORGANIZE_ON_SCHEDULE is enabled
     if app.config.get("AUTO_ORGANIZE_ON_SCHEDULE"):
-        scheduler.add_job(check_for_unorganized_torrents, 'interval', hours=1, id='organize_safety_net_job', replace_existing=True)
-        app.logger.info("Scheduled auto-organization job registered (runs every hour).")
+        organize_interval_hours = int(app.config.get("AUTO_ORGANIZE_INTERVAL_HOURS", 1))
+        scheduler.add_job(check_for_unorganized_torrents, 'interval', hours=organize_interval_hours, id='organize_safety_net_job', replace_existing=True)
+        app.logger.info(f"Scheduled auto-organization job registered (runs every {organize_interval_hours} hour(s)).")
     else:
         app.logger.info("AUTO_ORGANIZE_ON_SCHEDULE is disabled. No scheduled organization job will run.")
 else:

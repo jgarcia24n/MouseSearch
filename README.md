@@ -60,7 +60,8 @@ Open the `.env` file you just created and fill in the details.
 | `ENABLE_DYNAMIC_IP_UPDATE` | No | Set to `true` to enable automatic IP checking and updating of MAM's "Dynamic Seedbox IP" setting. Defaults to `false`. |
 | `DYNAMIC_IP_UPDATE_INTERVAL_HOURS` | No | Number of hours between automatic IP checks (only applies if `ENABLE_DYNAMIC_IP_UPDATE` is `true`). Defaults to `3`. |
 | `AUTO_ORGANIZE_ON_ADD` | No | Set to `true` to enable auto-organization when torrents are added. Defaults to `false`. |
-| `AUTO_ORGANIZE_ON_SCHEDULE` | No | Set to `true` to enable scheduled auto-organization (runs every hour). Defaults to `false`. |
+| `AUTO_ORGANIZE_ON_SCHEDULE` | No | Set to `true` to enable scheduled auto-organization. Defaults to `false`. |
+| `AUTO_ORGANIZE_INTERVAL_HOURS` | No | Number of hours between scheduled organization scans (only applies if `AUTO_ORGANIZE_ON_SCHEDULE` is `true`). Defaults to `1`. |
 | `ORGANIZED_PATH` | If auto-organization is enabled | The *container* path for your organized library (e.g., `/downloads/organized/audiobooks`). |
 | `QB_PATH` | If auto-organization is enabled | The *container* path where qBittorrent saves completed files for this category (e.g., `/downloads/torrents/organize-these/audiobooks`). |
 
@@ -143,17 +144,19 @@ It **uses hard links**, not copies. This means it takes up **no additional disk 
 You can now control two separate aspects of auto-organization:
 
 - **`AUTO_ORGANIZE_ON_ADD`**: Automatically organize files when torrents are added to qBittorrent
-- **`AUTO_ORGANIZE_ON_SCHEDULE`**: Periodically check for unorganized files (runs every hour)
+- **`AUTO_ORGANIZE_ON_SCHEDULE`**: Periodically check for unorganized files at a configurable interval
+- **`AUTO_ORGANIZE_INTERVAL_HOURS`**: How often (in hours) to run the scheduled organization scan (defaults to 1 hour)
 
 These can be enabled independently of each other:
 - Enable only `AUTO_ORGANIZE_ON_ADD` for immediate organization when files are added
 - Enable only `AUTO_ORGANIZE_ON_SCHEDULE` for batch processing on a schedule
 - Enable both for maximum coverage (recommended)
+- Adjust `AUTO_ORGANIZE_INTERVAL_HOURS` to control how frequently the scheduler runs (e.g., every 2 hours, every 6 hours, etc.)
 
 ### How It Works
 
 1.  When `AUTO_ORGANIZE_ON_ADD` is enabled and you add a torrent, MouseSearch calculates its infohash and saves the Author/Title metadata to `/app/data/metadata.json`.
-2.  When `AUTO_ORGANIZE_ON_SCHEDULE` is enabled, the app includes a scheduler that runs every hour to check for unorganized files.
+2.  When `AUTO_ORGANIZE_ON_SCHEDULE` is enabled, the app includes a scheduler that runs at the configured interval (default: every hour, configurable via `AUTO_ORGANIZE_INTERVAL_HOURS`) to check for unorganized files.
 3.  Both methods check `metadata.json` for any torrents marked as `organized: false`.
 4.  For each unorganized torrent, it:
     a.  Asks qBittorrent for its file path (e.g., `/downloads/torrents/organize-these/audiobooks/Some.Book.by.Some.Author`).

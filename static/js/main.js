@@ -403,6 +403,66 @@ document.addEventListener("DOMContentLoaded", function () {
     // setInterval(checkForIpUpdate, 30000);
     // checkForIpUpdate();
 
+    // Function to toggle dependent fields based on parent toggles
+    function updateDependentFields() {
+        const dynamicIpEnabled = document.getElementById('ENABLE_DYNAMIC_IP_UPDATE').checked;
+        const dynamicIpIntervalInput = document.getElementById('DYNAMIC_IP_UPDATE_INTERVAL_HOURS');
+        
+        if (dynamicIpIntervalInput) {
+            dynamicIpIntervalInput.disabled = !dynamicIpEnabled;
+            if (!dynamicIpEnabled) {
+                dynamicIpIntervalInput.classList.add('text-muted');
+            } else {
+                dynamicIpIntervalInput.classList.remove('text-muted');
+            }
+        }
+
+        // Organization path is only enabled if at least one auto-organize option is enabled
+        const autoOrganizeOnAdd = document.getElementById('AUTO_ORGANIZE_ON_ADD').checked;
+        const autoOrganizeOnSchedule = document.getElementById('AUTO_ORGANIZE_ON_SCHEDULE').checked;
+        const organizedPathInput = document.getElementById('ORGANIZED_PATH');
+        const organizeIntervalInput = document.getElementById('AUTO_ORGANIZE_INTERVAL_HOURS');
+        
+        if (organizedPathInput) {
+            const shouldEnable = autoOrganizeOnAdd || autoOrganizeOnSchedule;
+            organizedPathInput.disabled = !shouldEnable;
+            if (!shouldEnable) {
+                organizedPathInput.classList.add('text-muted');
+            } else {
+                organizedPathInput.classList.remove('text-muted');
+            }
+        }
+
+        // Organize interval is only enabled when scheduled re-scan is enabled
+        if (organizeIntervalInput) {
+            organizeIntervalInput.disabled = !autoOrganizeOnSchedule;
+            if (!autoOrganizeOnSchedule) {
+                organizeIntervalInput.classList.add('text-muted');
+            } else {
+                organizeIntervalInput.classList.remove('text-muted');
+            }
+        }
+    }
+
+    // Set up event listeners for toggles
+    const dynamicIpToggle = document.getElementById('ENABLE_DYNAMIC_IP_UPDATE');
+    if (dynamicIpToggle) {
+        dynamicIpToggle.addEventListener('change', updateDependentFields);
+    }
+
+    const autoOrganizeOnAddToggle = document.getElementById('AUTO_ORGANIZE_ON_ADD');
+    if (autoOrganizeOnAddToggle) {
+        autoOrganizeOnAddToggle.addEventListener('change', updateDependentFields);
+    }
+
+    const autoOrganizeOnScheduleToggle = document.getElementById('AUTO_ORGANIZE_ON_SCHEDULE');
+    if (autoOrganizeOnScheduleToggle) {
+        autoOrganizeOnScheduleToggle.addEventListener('change', updateDependentFields);
+    }
+
+    // Initialize disabled state on page load
+    updateDependentFields();
+
     document.getElementById('save-settings-button').addEventListener('click', function () {
         fetch('/update_settings', { method: 'POST', body: new FormData(document.getElementById('settings-form')) })
             .then(response => response.json())

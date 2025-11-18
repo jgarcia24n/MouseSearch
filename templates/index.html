@@ -431,14 +431,31 @@
           <label class="form-check-label" for="AUTO_ORGANIZE_ON_ADD">Auto-Organize on Download</label>
         </div>
 
-        <div class="form-check form-switch mb-3">
+        <div class="form-check form-switch mb-2">
           <input class="form-check-input" type="checkbox" id="AUTO_ORGANIZE_ON_SCHEDULE" name="AUTO_ORGANIZE_ON_SCHEDULE" 
           {% if AUTO_ORGANIZE_ON_SCHEDULE %}checked{% endif %}>
-          <label class="form-check-label" for="AUTO_ORGANIZE_ON_SCHEDULE">Scheduled Re-Scan (Every Hour)</label>
+          <label class="form-check-label" for="AUTO_ORGANIZE_ON_SCHEDULE">Scheduled Scan</label>
         </div>
 
         <div class="mb-3">
-          <label for="ORGANIZED_PATH" class="form-label small">Organization Dest Path (Container)</label>
+          <label for="AUTO_ORGANIZE_INTERVAL_HOURS" class="form-label small">
+            Scan Interval (hours)
+          </label>
+          <input
+            type="number"
+            class="form-control form-control-sm"
+            id="AUTO_ORGANIZE_INTERVAL_HOURS"
+            name="AUTO_ORGANIZE_INTERVAL_HOURS"
+            min="1"
+            value="{{ AUTO_ORGANIZE_INTERVAL_HOURS }}"
+          >
+          <div class="form-text small">
+            How often to scan for unorganized torrents when scheduled scan is enabled.
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label for="ORGANIZED_PATH" class="form-label small">Auto-Organize Destination</label>
           <input type="text" class="form-control form-control-sm" id="ORGANIZED_PATH" name="ORGANIZED_PATH" value="{{ ORGANIZED_PATH }}">
         </div>
 

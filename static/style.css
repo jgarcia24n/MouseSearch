@@ -29,3 +29,9 @@ body {
     color: var(--bs-secondary-color); /* Makes icons slightly less prominent than text */
     font-size: 1.1em;
 }
+
+/* Disabled form fields styling */
+input:disabled, select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
