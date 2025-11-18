@@ -1,6 +1,6 @@
 # MouseSearch
 
-MouseSearch is a self-hosted web application that provides a clean, fast search interface for MyAnonamouse (MAM). It connects directly to the MAM API for searching and the qBittorrent Web API for one-click downloading, bridging the gap between your favorite tracker and your download client.
+MouseSearch is a self-hosted web application that provides a clean, fast search interface for MyAnonamouse (MAM). It connects directly to the MAM API for searching and supports modular torrent client integrations (currently qBittorrent) for one-click downloading, bridging the gap between your favorite tracker and your download client.
 
 
 
@@ -8,12 +8,12 @@ MouseSearch is a self-hosted web application that provides a clean, fast search 
 
 * **MAM Search:** Full-text search for torrents on MyAnonamouse.
 * **Advanced Filtering:** Filter by title, author, narrator, media type, language, and advanced tracker filters (e.g., Freeleech, VIP, Active).
-* **One-Click Downloading:** Send torrents directly to your qBittorrent client, assigning a category from the UI.
+* **One-Click Downloading:** Send torrents directly to your torrent client (currently supports qBittorrent), assigning a category from the UI.
 * **Live Status Dashboards:**
     * View your MAM user stats (username, ratio, bonus points, etc.) directly in the app.
-    * Check the connection status to both MAM and to qBittorrent.
+    * Check the connection status to both MAM and your torrent client.
 * **Dynamic IP Updater:** Automatically checks your server's public IP and updates MAM's "Dynamic Seedbox IP" setting if a change is detected. This is ideal for home servers with dynamic IPs.
-* **Live Torrent Polling:** After adding a torrent, the UI polls qBittorrent to show its download status (e.g., "Downloading 50%", "Seeding") in real-time. Designates previously downloaded torrents as "Downloaded".
+* **Live Torrent Polling:** After adding a torrent, the UI polls your torrent client to show its download status (e.g., "Downloading 50%", "Seeding") in real-time. Designates previously downloaded torrents as "Downloaded".
 * **[BETA] Auto-Organization:** (See details below) Automatically hard-links completed audiobooks from your download folder to a clean, organized library structure (e.g., `Author/Title/file.m4b`).
 
 ## Technology Stack
@@ -21,7 +21,7 @@ MouseSearch is a self-hosted web application that provides a clean, fast search 
 * **Backend:** **Quart**
 * **Frontend:** **Bootstrap 5** & JavaScript
 * **Containerization:** **Docker**
-* **APIs:** MyAnonamouse (MAM) & qBittorrent
+* **APIs:** MyAnonamouse (MAM) & Modular Torrent Clients (qBittorrent)
 
 ## Installation & Configuration
 
@@ -52,10 +52,22 @@ Open the `.env` file you just created and fill in the details.
 | :--- | :--- | :--- |
 | `FLASK_SECRET_KEY` | **Yes** | A long, random string for session security. You can generate one with `openssl rand -hex 32` (or just smash on the keyboard a bit) |
 | `MAM_ID` | **Yes** | Your `mam_id` cookie value from [MyAnonamouse](https://www.myanonamouse.net/preferences/index.php?view=security). |
-| `QB_URL` | **Yes** | The full URL to your qBittorrent WebUI (e.g., `http://192.168.1.10:8080` or `http://qbittorrent:6767` if on the same Docker network). |
-| `QB_USERNAME` | **Yes** | Your qBittorrent username. |
-| `QB_PASSWORD` | **Yes** | Your qBittorrent password. |
-| `QB_CATEGORY` | No | (Optional) A default category to assign to downloads (e.g., `audiobooks`). |
+
+### Torrent Client Configuration
+
+MouseSearch supports modular torrent clients. Currently supported: **qBittorrent**. Transmission and other clients coming soon.
+
+| Variable | Required | Description |
+| :--- | :--- | :--- |
+| `TORRENT_CLIENT_TYPE` | No | The type of torrent client (default: `qbittorrent`). Future options: `transmission`, `deluge`. |
+| `TORRENT_CLIENT_URL` | **Yes** | The full URL to your torrent client WebUI (e.g., `http://192.168.1.10:8080` or `http://qbittorrent:6767` if on the same Docker network). |
+| `TORRENT_CLIENT_USERNAME` | **Yes** | Your torrent client username. |
+| `TORRENT_CLIENT_PASSWORD` | **Yes** | Your torrent client password. |
+| `TORRENT_CLIENT_CATEGORY` | No | (Optional) A default category to assign to downloads (e.g., `audiobooks`). |
+
+### Additional Configuration
+
+| Variable | Required | Description |
 | `DATA_PATH` | No | Directory path for storing app data files (config.json, metadata.json, ip_state.json). Defaults to `./data`. |
 | `ENABLE_DYNAMIC_IP_UPDATE` | No | Set to `true` to enable automatic IP checking and updating of MAM's "Dynamic Seedbox IP" setting. Defaults to `false`. |
 | `DYNAMIC_IP_UPDATE_INTERVAL_HOURS` | No | Number of hours between automatic IP checks (only applies if `ENABLE_DYNAMIC_IP_UPDATE` is `true`). Defaults to `3`. |
@@ -63,7 +75,7 @@ Open the `.env` file you just created and fill in the details.
 | `AUTO_ORGANIZE_ON_SCHEDULE` | No | Set to `true` to enable scheduled auto-organization. Defaults to `false`. |
 | `AUTO_ORGANIZE_INTERVAL_HOURS` | No | Number of hours between scheduled organization scans (only applies if `AUTO_ORGANIZE_ON_SCHEDULE` is `true`). Defaults to `1`. |
 | `ORGANIZED_PATH` | If auto-organization is enabled | The *container* path for your organized library (e.g., `/downloads/organized/audiobooks`). |
-| `QB_PATH` | If auto-organization is enabled | The *container* path where qBittorrent saves completed files for this category (e.g., `/downloads/torrents/organize-these/audiobooks`). |
+| `TORRENT_DOWNLOAD_PATH` | If auto-organization is enabled | The *container* path where your torrent client saves completed files for this category (e.g., `/downloads/torrents/organize-these/audiobooks`). |
 
 **How to find your `MAM_ID`:**
 1.  Log in to MyAnonamouse in your browser.
@@ -123,11 +135,11 @@ The application will be available at `http://<your-server-ip>:5000`.
 ## Usage
 
 1.  Open the application in your browser.
-2.  The app will show "NOT CONNECTED" for MAM and qBittorrent. The app's settings can be configured live from the UI, but using the `.env` file is recommended for persistence.
+2.  The app will show "NOT CONNECTED" for MAM and your torrent client. The app's settings can be configured live from the UI, but using the `.env` file is recommended for persistence.
 3.  If your `.env` is set up correctly, the dashboards should automatically update to "CONNECTED" and populate your user info.
 4.  Use the search bar to find content.
-5.  In the results, select a qBittorrent category (if desired) and click "Add to qBittorrent".
-6.  The torrent will be added, and a status badge will appear, polling qBittorrent for live progress.
+5.  In the results, select a torrent category (if desired) and click "Add to Client".
+6.  The torrent will be added, and a status badge will appear, polling your torrent client for live progress.
 
 ---
 
@@ -143,7 +155,7 @@ It **uses hard links**, not copies. This means it takes up **no additional disk 
 
 You can now control two separate aspects of auto-organization:
 
-- **`AUTO_ORGANIZE_ON_ADD`**: Automatically organize files when torrents are added to qBittorrent
+- **`AUTO_ORGANIZE_ON_ADD`**: Automatically organize files when torrents are added to your torrent client
 - **`AUTO_ORGANIZE_ON_SCHEDULE`**: Periodically check for unorganized files at a configurable interval
 - **`AUTO_ORGANIZE_INTERVAL_HOURS`**: How often (in hours) to run the scheduled organization scan (defaults to 1 hour)
 
@@ -159,7 +171,7 @@ These can be enabled independently of each other:
 2.  When `AUTO_ORGANIZE_ON_SCHEDULE` is enabled, the app includes a scheduler that runs at the configured interval (default: every hour, configurable via `AUTO_ORGANIZE_INTERVAL_HOURS`) to check for unorganized files.
 3.  Both methods check `metadata.json` for any torrents marked as `organized: false`.
 4.  For each unorganized torrent, it:
-    a.  Asks qBittorrent for its file path (e.g., `/downloads/torrents/organize-these/audiobooks/Some.Book.by.Some.Author`).
+    a.  Asks your torrent client for its file path (e.g., `/downloads/torrents/organize-these/audiobooks/Some.Book.by.Some.Author`).
     b.  Sanitizes the Author ("Some Author") and Title ("Some Book").
     c.  Creates the destination path: `/downloads/organized/audiobooks/Some Author/Some Book`.
     d.  Scans the source directory for audio files (`.m4b`, `.mp3`, etc.) and hard-links each one to the destination.
@@ -167,7 +179,7 @@ These can be enabled independently of each other:
 
 ### Critical Setup Requirement
 
-For hard links to work, your source (`QB_PATH`) and destination (`ORGANIZED_PATH`) directories **must exist on the same filesystem**.
+For hard links to work, your source (`TORRENT_DOWNLOAD_PATH`) and destination (`ORGANIZED_PATH`) directories **must exist on the same filesystem**.
 
 The easiest way to ensure this is to have a single parent directory (e.g., `/mnt/storage/downloads`) on your host machine that contains *both* your torrents and your organized media. You then pass this single parent directory as a volume in your `compose.yaml`, as shown in the example.
 
@@ -175,7 +187,7 @@ The easiest way to ensure this is to have a single parent directory (e.g., `/mnt
 
 * **Host Path:** `/mnt/storage/downloads`
 * **Volume Mount:** `- /mnt/storage/downloads:/downloads`
-* **.env `QB_PATH`:** `/downloads/torrents/organize-these/audiobooks`
+* **.env `TORRENT_DOWNLOAD_PATH`:** `/downloads/torrents/organize-these/audiobooks`
 * **.env `ORGANIZED_PATH`:** `/downloads/organized/audiobooks`
 
 This setup guarantees that both container paths point to the same underlying device, allowing hard links to be created.

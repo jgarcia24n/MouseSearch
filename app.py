@@ -22,6 +22,8 @@ from language_dict import language_dict
 
 import asyncio
 
+from clients import get_torrent_client
+
 
         
 
@@ -105,16 +107,18 @@ load_dotenv()
 FALLBACK_CONFIG = {
     "QUART_SECRET_KEY": os.urandom(24).hex(),
     "MAM_API_URL": "https://www.myanonamouse.net",
-    "QB_URL": "http://localhost:8080",
-    "QB_CATEGORY": "",
-    "QB_USERNAME": "admin",
-    "QB_PASSWORD": "",
+    # New generic torrent client settings
+    "TORRENT_CLIENT_TYPE": "qbittorrent",
+    "TORRENT_CLIENT_URL": "http://localhost:8080",
+    "TORRENT_CLIENT_USERNAME": "admin",
+    "TORRENT_CLIENT_PASSWORD": "",
+    "TORRENT_CLIENT_CATEGORY": "",
     "MAM_ID": "",
     "CF_ACCESS_CLIENT_ID": None,
     "CF_ACCESS_CLIENT_SECRET": None,
     "DATA_PATH": "./data",
     "ORGANIZED_PATH": "/downloads/organized",
-    "QB_PATH": "/downloads/torrents/organize-these/audiobooks",
+    "TORRENT_DOWNLOAD_PATH": "/downloads/torrents/organize-these/audiobooks",
     "AUTO_ORGANIZE_ON_ADD": False,
     "AUTO_ORGANIZE_ON_SCHEDULE": False,
     "AUTO_ORGANIZE_INTERVAL_HOURS": 1,
@@ -125,7 +129,7 @@ FALLBACK_CONFIG = {
 # Set up data directory and paths
 DATA_PATH = Path(os.getenv("DATA_PATH", FALLBACK_CONFIG["DATA_PATH"])).resolve()
 ORGANIZED_PATH = Path(os.getenv("ORGANIZED_PATH", FALLBACK_CONFIG["ORGANIZED_PATH"])).resolve()
-QB_PATH = Path(os.getenv("QB_PATH", FALLBACK_CONFIG["QB_PATH"])).resolve()
+TORRENT_DOWNLOAD_PATH = Path(os.getenv("TORRENT_DOWNLOAD_PATH", FALLBACK_CONFIG["TORRENT_DOWNLOAD_PATH"])).resolve()
 
 # Create data directory if it doesn't exist
 DATA_PATH.mkdir(parents=True, exist_ok=True)
@@ -188,6 +192,15 @@ async def load_new_app_config():
     global mam_session_cookies
     mam_session_cookies = {"mam_id": app.config.get("MAM_ID")}
 
+    # Initialize the Torrent Client using factory pattern
+    global torrent_client
+    try:
+        torrent_client = get_torrent_client(app.config)
+        app.logger.info(f"Initialized torrent client: {app.config.get('TORRENT_CLIENT_TYPE', 'qbittorrent')}")
+    except Exception as e:
+        app.logger.error(f"Failed to initialize torrent client: {e}")
+        torrent_client = None
+
 # Load initial config synchronously
 initial_config = load_config()
 app.secret_key = initial_config["QUART_SECRET_KEY"]
@@ -197,6 +210,9 @@ app.config["BASE_HEADERS"] = {
     "CF-Access-Client-Secret": initial_config.get("CF_ACCESS_CLIENT_SECRET"),
 }
 mam_session_cookies = {"mam_id": initial_config.get("MAM_ID")}
+
+# Initialize torrent client variable (will be set in load_new_app_config)
+torrent_client = None
 
 # --- IP STATE MANAGEMENT AND DYNAMIC IP UPDATER ---
 
@@ -290,8 +306,6 @@ else:
     app.logger.info("Dynamic IP Update disabled by config.")
     
 # --- SESSION AND API HELPERS ---
-QB_SESSION = None
-
 def update_cookies(response):
     """Extract and update cookies from the API response."""
     global mam_session_cookies
@@ -310,23 +324,6 @@ async def login_mam():
             if new_cookies := dict(response.cookies):
                 mam_session_cookies.update(new_cookies)
             return True
-    return False
-
-async def login_qbittorrent():
-    qb_url, username, password = app.config.get("QB_URL"), app.config.get("QB_USERNAME"), app.config.get("QB_PASSWORD")
-    if not all([qb_url, username, password]): return False
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{qb_url}/api/v2/auth/login", 
-                data={'username': username, 'password': password}, 
-                headers=app.config.get("BASE_HEADERS", {})
-            )
-            if "Ok" in response.text:
-                session['qb_session'] = dict(response.cookies)
-                return True
-    except RequestError: 
-        return False
     return False
 
 # --- QUART ROUTES ---
@@ -359,44 +356,41 @@ async def mam_user_data():
         app.logger.error(f"Failed to fetch MAM user data: {e}")
         return jsonify({'error': 'Failed to fetch data from MAM API'}), 503
     
-# --- QBITTORRENT ROUTES ---
-@app.route('/qb/status', methods=['GET'])
-async def qb_status():
-    if 'qb_session' not in session and not await login_qbittorrent():
-        return jsonify({"status": "error", "message": "Unable to connect to qBittorrent."}), 503
-    try:
-        async with httpx.AsyncClient(cookies=session['qb_session']) as client:
-            response = await client.get(
-                f"{app.config['QB_URL']}/api/v2/app/version", 
-                headers=app.config.get("BASE_HEADERS", {})
-            )
-            response.raise_for_status()
-            return jsonify({"status": "success", "message": "qBittorrent is connected."}), 200
-    except RequestError as e:
-        return jsonify({"status": "error", "message": f"Failed to connect: {e}"}), 503
+# --- GENERIC TORRENT CLIENT ROUTES ---
+@app.route('/client/status', methods=['GET'])
+async def client_status():
+    """Generic status check for the configured torrent client."""
+    if not torrent_client:
+        return jsonify({"status": "error", "message": "Client not initialized"}), 500
+    
+    # Ensure logged in (client impl handles caching cookies if needed)
+    await torrent_client.login()
+    return jsonify(await torrent_client.get_status())
 
-@app.route('/qb/categories', methods=['GET'])
-async def qb_categories():
-    if 'qb_session' not in session and not await login_qbittorrent():
-        return jsonify({'error': 'Not connected to qBittorrent'}), 401
-    async with httpx.AsyncClient(cookies=session['qb_session']) as client:
-        response = await client.get(
-            f"{app.config['QB_URL']}/api/v2/torrents/categories", 
-            headers=app.config.get("BASE_HEADERS", {})
-        )
-        return jsonify(response.json()) if response.is_success else (jsonify({'error': 'Failed to fetch categories'}), response.status_code)
+@app.route('/client/categories', methods=['GET'])
+async def client_categories():
+    """Get categories from the torrent client."""
+    if not torrent_client:
+        return jsonify({'error': 'Not connected to torrent client'}), 401
+    
+    await torrent_client.login()
+    categories = await torrent_client.get_categories()
+    return jsonify(categories) if categories else (jsonify({'error': 'Failed to fetch categories'}), 500)
 
-@app.route('/qb/add', methods=['POST'])
-async def qb_add_torrent():
-    if 'qb_session' not in session and not await login_qbittorrent():
-        return jsonify({'error': 'Not connected to qBittorrent'}), 401
+@app.route('/client/add', methods=['POST'])
+async def client_add_torrent():
+    """Add a torrent to the configured client."""
+    if not torrent_client:
+        return jsonify({'error': 'Client not initialized'}), 500
+    
+    await torrent_client.login()
 
     incoming_data = await request.get_json()
     if not incoming_data:
-        app.logger.error("Received empty or non-JSON payload for /qb/add")
+        app.logger.error("Received empty or non-JSON payload for /client/add")
         return jsonify({'error': 'Invalid request: No JSON body found'}), 400
 
-    app.logger.info(f"Received /qb/add request with payload: {incoming_data}")
+    app.logger.info(f"Received /client/add request with payload: {incoming_data}")
 
     torrent_url = incoming_data.get('torrent_url') or incoming_data.get('url')
     author = incoming_data.get('author', 'Unknown Author')
@@ -423,33 +417,85 @@ async def qb_add_torrent():
             save_metadata(metadata)
             app.logger.info(f"Saved metadata for torrent hash: {hash_val}")
     
-    # --- The rest of the function remains the same ---
-    category = incoming_data.get('category', app.config.get("QB_CATEGORY", ""))
-    qb_url = app.config['QB_URL']
-    payload = {'urls': torrent_url, 'category': category}
-    custom_headers = app.config.get("BASE_HEADERS", {}).copy()
-    custom_headers['Referer'] = qb_url
+    # Add torrent to client
+    category = incoming_data.get('category', app.config.get("TORRENT_CLIENT_CATEGORY", ""))
+    
+    result = await torrent_client.add_torrent(torrent_url, category)
+    
+    if result['status'] == 'success':
+        app.logger.info("SUCCESS: Torrent added to client.")
+        response_data = {'message': result['message']}
+        if auto_organize_warning:
+            response_data['warning'] = auto_organize_warning
+        return jsonify(response_data)
+    else:
+        error_message = result.get('message', 'Unknown error')
+        app.logger.error(f"Client rejected the torrent: {error_message}")
+        return jsonify({'error': error_message}), 400
 
+@app.route('/client/info/<hash_val>', methods=['GET'])
+async def client_torrent_info(hash_val):
+    """Get torrent info by hash from the torrent client."""
+    app.logger.info(f"Request received for torrent info with hash: {hash_val}")
+    if not torrent_client:
+        app.logger.error("Failed to get torrent info: Client not initialized.")
+        return jsonify({'error': 'Client not initialized'}), 500
+    
+    await torrent_client.login()
+    
     try:
-        app.logger.info(f"Attempting to add torrent via URL to qBittorrent: {torrent_url}")
-        async with httpx.AsyncClient(cookies=session['qb_session']) as client:
-            response = await client.post(f"{qb_url}/api/v2/torrents/add", data=payload, headers=custom_headers)
-            response.raise_for_status()
+        info = await torrent_client.get_torrent_info(hash_val)
+        
+        if not info:
+            app.logger.warning(f"Client returned no info for hash {hash_val}. Torrent may not exist in client.")
+            return jsonify({'error': 'Torrent not found in client'}), 404
 
-            if "Ok." in response.text:
-                app.logger.info("SUCCESS: Torrent added to qBittorrent.")
-                response_data = {'message': 'Torrent added successfully'}
-                if auto_organize_warning:
-                    response_data['warning'] = auto_organize_warning
-                return jsonify(response_data)
-            else:
-                error_message = f"qBittorrent rejected the torrent. Response: {response.text or '[No Response Body]'}"
-                app.logger.error(error_message)
-                return jsonify({'error': error_message}), 400
+        return jsonify(info)
+        
+    except Exception as e:
+        app.logger.error(f"Failed to fetch torrent info for hash {hash_val}: {e}")
+        return jsonify({'error': f'Failed to fetch torrent info: {e}'}), 503
 
-    except RequestError as e:
-        app.logger.error(f"Failed to send 'add torrent' request to qBittorrent: {e}")
-        return jsonify({'error': f'Failed to communicate with qBittorrent: {e}'}), 503
+@app.route('/client/info/batch', methods=['POST'])
+async def client_torrent_info_batch():
+    """
+    Batch endpoint for getting torrent info for multiple hashes at once.
+    Accepts: {"hashes": ["hash1", "hash2", ...]}
+    Returns: {"torrents": {hash1: {data}, hash2: {data}, ...}}
+    """
+    data = await request.get_json()
+    hash_list = data.get('hashes', [])
+    
+    if not hash_list:
+        return jsonify({'torrents': []})
+    
+    app.logger.info(f"Batch request received for {len(hash_list)} torrent(s)")
+    
+    if not torrent_client:
+        app.logger.error("Failed to get batch torrent info: Client not initialized.")
+        return jsonify({'error': 'Client not initialized'}), 500
+    
+    await torrent_client.login()
+    
+    try:
+        # Check if client supports batch operations
+        if hasattr(torrent_client, 'get_torrent_info_batch'):
+            result = await torrent_client.get_torrent_info_batch(hash_list)
+            if 'error' in result:
+                return jsonify(result), 503
+            return jsonify(result)
+        else:
+            # Fallback: fetch individually
+            torrents_by_hash = {}
+            for hash_val in hash_list:
+                info = await torrent_client.get_torrent_info(hash_val)
+                if info:
+                    torrents_by_hash[hash_val] = info
+            return jsonify({'torrents': torrents_by_hash})
+        
+    except Exception as e:
+        app.logger.error(f"Failed to fetch batch torrent info: {e}")
+        return jsonify({'error': f'Failed to fetch batch torrent info: {e}'}), 503
     
 def load_metadata():
     """Loads the torrent metadata store."""
@@ -473,88 +519,6 @@ def sanitize_filename(name: str) -> str:
     return sanitized if sanitized else "Untitled"
 
     
-@app.route('/qb/info/<hash_val>', methods=['GET'])
-async def qb_torrent_info(hash_val):
-    app.logger.info(f"Request received for torrent info with hash: {hash_val}")
-    if 'qb_session' not in session and not await login_qbittorrent():
-        app.logger.error("Failed to get torrent info: Not connected to qBittorrent.")
-        return jsonify({'error': 'Not connected to qBittorrent'}), 401
-    
-    try:
-        # --- FIX: Call the /info endpoint, not /properties ---
-        # Note the parameter is 'hashes' (plural)
-        async with httpx.AsyncClient(cookies=session['qb_session']) as client:
-            response = await client.get(
-                f"{app.config['QB_URL']}/api/v2/torrents/info",
-                params={'hashes': hash_val},
-                headers=app.config.get("BASE_HEADERS", {})
-            )
-            response.raise_for_status()
-            
-            # The /info endpoint returns a LIST of torrents.
-            torrent_list = response.json()
-            app.logger.debug(f"Received info for hash {hash_val}: {json.dumps(torrent_list)}")
-            
-            # If the list is empty, the torrent doesn't exist in the client.
-            if not torrent_list:
-                 app.logger.warning(f"qBittorrent returned no info for hash {hash_val}. Torrent may not exist in client.")
-                 return jsonify({'error': 'Torrent not found in qBittorrent'}), 404
-
-            # Return the first (and only) object from the list.
-            return jsonify(torrent_list[0])
-        
-    except RequestError as e:
-        app.logger.error(f"Failed to fetch torrent info for hash {hash_val}: {e}")
-        return jsonify({'error': f'Failed to fetch torrent info: {e}'}), 503
-    except json.JSONDecodeError as e:
-        app.logger.error(f"Failed to decode qBittorrent info response for hash {hash_val}: {e}")
-        return jsonify({'error': 'Failed to decode response from qBittorrent'}), 500
-
-@app.route('/qb/info/batch', methods=['POST'])
-async def qb_torrent_info_batch():
-    """
-    Batch endpoint for getting torrent info for multiple hashes at once.
-    Accepts: {"hashes": ["hash1", "hash2", ...]}
-    Returns: {"torrents": [{torrent1_data}, {torrent2_data}, ...]}
-    """
-    data = await request.get_json()
-    hash_list = data.get('hashes', [])
-    
-    if not hash_list:
-        return jsonify({'torrents': []})
-    
-    app.logger.info(f"Batch request received for {len(hash_list)} torrent(s)")
-    
-    if 'qb_session' not in session and not await login_qbittorrent():
-        app.logger.error("Failed to get batch torrent info: Not connected to qBittorrent.")
-        return jsonify({'error': 'Not connected to qBittorrent'}), 401
-    
-    try:
-        # Join hashes with pipe separator as per qBittorrent API spec
-        hashes_param = '|'.join(hash_list)
-        
-        async with httpx.AsyncClient(cookies=session['qb_session']) as client:
-            response = await client.get(
-                f"{app.config['QB_URL']}/api/v2/torrents/info",
-                params={'hashes': hashes_param},
-                headers=app.config.get("BASE_HEADERS", {})
-            )
-            response.raise_for_status()
-            
-            torrent_list = response.json()
-            app.logger.debug(f"Received batch info for {len(torrent_list)} torrent(s)")
-            
-            # Return the list of torrents indexed by hash for easy lookup
-            torrents_by_hash = {t['hash']: t for t in torrent_list}
-            return jsonify({'torrents': torrents_by_hash})
-        
-    except RequestError as e:
-        app.logger.error(f"Failed to fetch batch torrent info: {e}")
-        return jsonify({'error': f'Failed to fetch batch torrent info: {e}'}), 503
-    except json.JSONDecodeError as e:
-        app.logger.error(f"Failed to decode qBittorrent batch info response: {e}")
-        return jsonify({'error': 'Failed to decode response from qBittorrent'}), 500
-
 @app.route('/calculate_hash', methods=['POST'])
 async def get_torrent_hash():
     data = await request.get_json()
@@ -687,18 +651,19 @@ async def mam_search():
 
             ranked = rank_results(results)
             
-            # Check qBittorrent status
-            qb_status_response, status_code = await qb_status()
-            qb_status_json = await qb_status_response.get_json()
-            qb_connected = qb_status_json.get("status") == "success"
+            # Check torrent client status
+            client_status_data = await torrent_client.get_status() if torrent_client else {"status": "error"}
+            client_connected = client_status_data.get("status") == "success"
             
             categories = {}
-            if qb_connected:
-                categories_response = await qb_categories()
-                if categories_response.status_code == 200:
-                    categories = await categories_response.get_json()
+            if client_connected:
+                categories = await torrent_client.get_categories()
             
-            return await render_template("partials/results.html", results=ranked, QB_STATUS="CONNECTED" if qb_connected else "NOT CONNECTED", categories=categories, QB_CATEGORY=app.config.get("QB_CATEGORY"))
+            return await render_template("partials/results.html", 
+                                       results=ranked, 
+                                       CLIENT_STATUS="CONNECTED" if client_connected else "NOT CONNECTED", 
+                                       categories=categories, 
+                                       TORRENT_CLIENT_CATEGORY=app.config.get("TORRENT_CLIENT_CATEGORY", ""))
     except RequestError as e:
         return await render_template("partials/results.html", error_message=f"Error connecting to MAM API: {e}")
     except json.JSONDecodeError:
@@ -784,8 +749,8 @@ async def update_settings():
             config_to_update[key] = form[key]
     
     # Special handling for password (only update if provided)
-    if form.get("QB_PASSWORD"):
-        config_to_update["QB_PASSWORD"] = form.get("QB_PASSWORD")
+    if form.get("TORRENT_CLIENT_PASSWORD"):
+        config_to_update["TORRENT_CLIENT_PASSWORD"] = form.get("TORRENT_CLIENT_PASSWORD")
 
     save_config(config_to_update)
     await load_new_app_config()
@@ -823,101 +788,99 @@ if app.config.get("AUTO_ORGANIZE_ON_ADD") or app.config.get("AUTO_ORGANIZE_ON_SC
         if retry_count >= 3:
             return True, f"Skipping: Torrent {hash_val} has exceeded maximum retry attempts ({retry_count})."
 
-        # 2. Get torrent info from qBittorrent to find its content path
-        if not await login_qbittorrent():
-            return False, "qBittorrent login failed."
+        # 2. Get torrent info from client to find its content path
+        if not torrent_client:
+            return False, "Torrent client not initialized."
+        
+        await torrent_client.login()
         
         try:
-            async with httpx.AsyncClient(cookies=session['qb_session']) as client:
-                response = await client.get(
-                    f"{app.config['QB_URL']}/api/v2/torrents/properties",
-                    params={'hash': hash_val},
-                    headers=app.config.get("BASE_HEADERS", {})
-                )
-                response.raise_for_status()
-                properties = response.json()
-                # must make sure save_path matches between qBittorrent and MouseSearch 
-                content_path = Path(QB_PATH) / properties.get('name')
-                # content_path = Path(properties.get('save_path')) / properties.get('name')
+            info = await torrent_client.get_torrent_info(hash_val)
+            if not info:
+                return False, f"Torrent {hash_val} not found in client."
+            
+            # Get the download path configured for the torrent client
+            # Construct the content path using the client's download path and torrent name
+            content_path = Path(TORRENT_DOWNLOAD_PATH) / info.get('name')
+            
+            # 3. Define paths and perform the linking
+            organized_path = Path(ORGANIZED_PATH)
+            
+            torrent_meta = metadata[hash_val]
+            s_author = sanitize_filename(torrent_meta['author'])
+            s_title = sanitize_filename(torrent_meta['title'])
+            dest_path = organized_path / s_author / s_title
 
-                # 3. Define paths and perform the linking
-                organized_path = Path(ORGANIZED_PATH)
-                
-                torrent_meta = metadata[hash_val]
-                s_author = sanitize_filename(torrent_meta['author'])
-                s_title = sanitize_filename(torrent_meta['title'])
-                dest_path = organized_path / s_author / s_title
+            # Check if source exists
+            if not content_path.exists():
+                # Don't increment retry counter - this might be a timing issue
+                return False, f"Source path does not exist: {content_path}"
+            
+            # Handle destination creation errors
+            try:
+                dest_path.mkdir(parents=True, exist_ok=True)
+            except (OSError, PermissionError) as e:
+                return False, f"Cannot create destination directory '{dest_path}': {e}"
+            
+            files_linked = 0
+            files_already_exist = 0
+            audio_extensions = ['.m4b', '.mp3', '.flac', '.ogg', '.opus', '.m4a']
 
-                # Check if source exists
-                if not content_path.exists():
-                    # Don't increment retry counter - this might be a timing issue
-                    return False, f"Source path does not exist: {content_path}"
-                
-                # Handle destination creation errors
-                try:
-                    dest_path.mkdir(parents=True, exist_ok=True)
-                except (OSError, PermissionError) as e:
-                    return False, f"Cannot create destination directory '{dest_path}': {e}"
-                
-                files_linked = 0
-                files_already_exist = 0
-                audio_extensions = ['.m4b', '.mp3', '.flac', '.ogg', '.opus', '.m4a']
+            # Handle directory vs file correctly
+            if content_path.is_dir():
+                source_files = content_path.rglob('*')
+            else:
+                source_files = [content_path]
 
-                # Handle directory vs file correctly
-                if content_path.is_dir():
-                    source_files = content_path.rglob('*')
-                else:
-                    source_files = [content_path]
-
-                for source_file in source_files:
-                    if source_file.is_file() and source_file.suffix.lower() in audio_extensions:
-                        # Preserve the original torrent folder structure
-                        relative_path = source_file.relative_to(content_path)
-                        dest_file = dest_path / relative_path
-                        dest_file.parent.mkdir(parents=True, exist_ok=True)
-                        
-                        if dest_file.exists():
-                            # Count existing files separately
-                            files_already_exist += 1
-                            app.logger.debug(f"[ORGANIZE] Skipped (already exists): {dest_file}")
-                        else:
-                            try:
-                                os.link(source_file, dest_file)
-                                files_linked += 1
-                                app.logger.info(f"[ORGANIZE] Linked: {source_file} -> {dest_file}")
-                            except (OSError, PermissionError) as e:
-                                # Handle individual file link errors
-                                app.logger.error(f"[ORGANIZE] Failed to link {source_file} -> {dest_file}: {e}")
-                                # Continue processing other files
-
-                # 4. Update metadata based on results
-                total_audio_files = files_linked + files_already_exist
-                
-                if total_audio_files == 0:
-                    # No audio files found at all - increment retry
-                    metadata[hash_val]['retry_count'] = retry_count + 1
-                    save_metadata(metadata)
-                    return False, f"No compatible audio files found for '{s_title}' (attempt {retry_count + 1}/3)."
-                
-                # Success if files were linked OR already existed
-                if files_linked > 0 or files_already_exist > 0:
-                    metadata[hash_val]['organized'] = True
-                    save_metadata(metadata)
+            for source_file in source_files:
+                if source_file.is_file() and source_file.suffix.lower() in audio_extensions:
+                    # Preserve the original torrent folder structure
+                    relative_path = source_file.relative_to(content_path)
+                    dest_file = dest_path / relative_path
+                    dest_file.parent.mkdir(parents=True, exist_ok=True)
                     
-                    if files_linked > 0 and files_already_exist > 0:
-                        msg = f"SUCCESS: '{s_title}' by {s_author} - {files_linked} new files linked, {files_already_exist} already existed (total: {total_audio_files} files in '{dest_path}')."
-                    elif files_linked > 0:
-                        msg = f"SUCCESS: '{s_title}' by {s_author} - {files_linked} files linked to '{dest_path}'."
+                    if dest_file.exists():
+                        # Count existing files separately
+                        files_already_exist += 1
+                        app.logger.debug(f"[ORGANIZE] Skipped (already exists): {dest_file}")
                     else:
-                        msg = f"SUCCESS: '{s_title}' by {s_author} - All {files_already_exist} files already organized in '{dest_path}'."
-                    
-                    app.logger.info(f"[ORGANIZE] {msg}")
-                    return True, msg
-                
-                # This should never happen given the logic above, but as a safety net:
-                return False, "Unexpected error: No files processed."
+                        try:
+                            os.link(source_file, dest_file)
+                            files_linked += 1
+                            app.logger.info(f"[ORGANIZE] Linked: {source_file} -> {dest_file}")
+                        except (OSError, PermissionError) as e:
+                            # Handle individual file link errors
+                            app.logger.error(f"[ORGANIZE] Failed to link {source_file} -> {dest_file}: {e}")
+                            # Continue processing other files
 
-        except RequestError as e:
+            # 4. Update metadata based on results
+            total_audio_files = files_linked + files_already_exist
+            
+            if total_audio_files == 0:
+                # No audio files found at all - increment retry
+                metadata[hash_val]['retry_count'] = retry_count + 1
+                save_metadata(metadata)
+                return False, f"No compatible audio files found for '{s_title}' (attempt {retry_count + 1}/3)."
+            
+            # Success if files were linked OR already existed
+            if files_linked > 0 or files_already_exist > 0:
+                metadata[hash_val]['organized'] = True
+                save_metadata(metadata)
+                
+                if files_linked > 0 and files_already_exist > 0:
+                    msg = f"SUCCESS: '{s_title}' by {s_author} - {files_linked} new files linked, {files_already_exist} already existed (total: {total_audio_files} files in '{dest_path}')."
+                elif files_linked > 0:
+                    msg = f"SUCCESS: '{s_title}' by {s_author} - {files_linked} files linked to '{dest_path}'."
+                else:
+                    msg = f"SUCCESS: '{s_title}' by {s_author} - All {files_already_exist} files already organized in '{dest_path}'."
+                
+                app.logger.info(f"[ORGANIZE] {msg}")
+                return True, msg
+            
+            # This should never happen given the logic above, but as a safety net:
+            return False, "Unexpected error: No files processed."
+
+        except Exception as e:
             return False, f"API error during organization: {e}"
         except json.JSONDecodeError as e:
             return False, f"Failed to parse qBittorrent response: {e}"

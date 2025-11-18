@@ -76,7 +76,7 @@ async function performBatchPoll() {
     console.log(`[BATCH-POLL] Polling ${hashArray.length} torrent(s)`);
     
     try {
-        const response = await fetch('/qb/info/batch', {
+        const response = await fetch('/client/info/batch', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ hashes: hashArray })
@@ -106,7 +106,7 @@ async function performBatchPoll() {
             
             const torrentData = torrents[hash];
             if (!torrentData) {
-                // Torrent not found in qBittorrent - implement retry logic
+                // Torrent not found in client - implement retry logic
                 const retries = hashRetryCount.get(hash) || 0;
                 if (retries < MAX_RETRIES) {
                     // Increment retry count and show waiting message
@@ -114,7 +114,7 @@ async function performBatchPoll() {
                     const statusContainer = resultItem.querySelector('.torrent-status-container');
                     if (statusContainer) {
                         const waitTime = Math.ceil((MAX_RETRIES - retries) * 2); // Rough estimate of remaining wait time
-                        statusContainer.innerHTML = `<span class="badge bg-warning text-wrap">Waiting for qBittorrent to process torrent... (${waitTime}s)</span>`;
+                        statusContainer.innerHTML = `<span class="badge bg-warning text-wrap">Waiting for client to process torrent... (${waitTime}s)</span>`;
                     }
                     console.log(`[BATCH-POLL] Torrent ${hash} not found, retry ${retries + 1}/${MAX_RETRIES}`);
                     continue; // Keep polling
@@ -122,7 +122,7 @@ async function performBatchPoll() {
                     // Max retries reached, give up
                     const statusContainer = resultItem.querySelector('.torrent-status-container');
                     if (statusContainer) {
-                        statusContainer.innerHTML = `<span class="badge bg-danger text-wrap">Torrent not found in qBittorrent</span>`;
+                        statusContainer.innerHTML = `<span class="badge bg-danger text-wrap">Torrent not found in client</span>`;
                     }
                     console.log(`[BATCH-POLL] Giving up on torrent ${hash} after ${MAX_RETRIES} retries`);
                     removeHashFromPolling(hash);
@@ -262,13 +262,13 @@ function pollTorrentStatus(hash, resultItem) {
 }
 
 /**
- * Checks the connection status of QBittorrent and updates the UI.
+ * Checks the connection status of the torrent client and updates the UI.
  */
-function checkQBStatus() {
-    const statusSpan = document.getElementById("qb-status");
-    const statusIconSpan = document.getElementById("qb-status-icon");
+function checkClientStatus() {
+    const statusSpan = document.getElementById("client-status");
+    const statusIconSpan = document.getElementById("client-status-icon");
 
-    fetch('/qb/status', { cache: "no-store" })
+    fetch('/client/status', { cache: "no-store" })
         .then(response => response.json())
         .then(data => {
             const isSuccess = data.status === "success";
@@ -284,7 +284,7 @@ function checkQBStatus() {
             }
         })
         .catch(error => {
-            console.error("Error fetching QB_STATUS:", error);
+            console.error("Error fetching CLIENT_STATUS:", error);
             if (statusSpan) {
                 statusSpan.textContent = "NOT CONNECTED";
                 statusSpan.className = "text-danger";
@@ -296,14 +296,14 @@ function checkQBStatus() {
 }
 
 /**
- * Refreshes qBittorrent categories and populates dropdowns.
+ * Refreshes torrent client categories and populates dropdowns.
  */
 function refreshCategories() {
-    fetch('/qb/categories', { cache: "no-store" })
+    fetch('/client/categories', { cache: "no-store" })
         .then(response => response.json())
         .then(data => {
             const dropdowns = document.querySelectorAll('.category-dropdown');
-            const defaultCategory = document.getElementById('QB_CATEGORY')?.value || '';
+            const defaultCategory = document.getElementById('TORRENT_CLIENT_CATEGORY')?.value || '';
             dropdowns.forEach(dropdown => {
                 const currentVal = dropdown.value;
                 dropdown.innerHTML = '<option value="">Category</option>';
@@ -398,7 +398,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const wrapper = document.getElementById('results-container-wrapper');
     const resultsTitle = document.getElementById('results-title');
 
-    checkQBStatus();
+    checkClientStatus();
     loadMamUserData();
     // setInterval(checkForIpUpdate, 30000);
     // checkForIpUpdate();
@@ -469,9 +469,15 @@ document.addEventListener("DOMContentLoaded", function () {
             .then(data => {
                 showToast(data.message, data.status === 'success' ? 'success' : 'danger');
                 if (data.status === 'success') {
-                    document.getElementById('qbLink').href = document.getElementById('QB_URL').value;
-                    document.getElementById('qbLink').textContent = document.getElementById('QB_URL').value;
-                    checkQBStatus();
+                    document.getElementById('clientLink').href = document.getElementById('TORRENT_CLIENT_URL').value;
+                    document.getElementById('clientLink').textContent = document.getElementById('TORRENT_CLIENT_URL').value;
+                    
+                    // Update client type display
+                    const clientType = document.getElementById('TORRENT_CLIENT_TYPE').value;
+                    const clientTypeDisplay = clientType.charAt(0).toUpperCase() + clientType.slice(1);
+                    document.getElementById('client-type-display').textContent = clientTypeDisplay;
+                    
+                    checkClientStatus();
                     loadMamUserData();
                 }
             })
@@ -524,7 +530,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     resultsContainer.addEventListener('click', function (event) {
         // Find the button, even if the click was on an icon inside it
-        const button = event.target.closest('.add-to-qbittorrent-button');
+        const button = event.target.closest('.add-to-client-button');
         if (button) {
             event.preventDefault();
             // Find the result item first (needed to get torrentId and category)
@@ -536,10 +542,10 @@ document.addEventListener("DOMContentLoaded", function () {
             // Find the category dropdown within the same result item
             const category = resultItem.querySelector('.category-dropdown')?.value || '';
 
-            console.log(`[ADD] 'Add to qBittorrent' clicked for URL: ${torrentUrl} with category: '${category}'`);
+            console.log(`[ADD] 'Add to Client' clicked for URL: ${torrentUrl} with category: '${category}'`);
 
             button.disabled = true;
-            fetch('/qb/add', {
+            fetch('/client/add', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

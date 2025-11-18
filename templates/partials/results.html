@@ -68,24 +68,24 @@
     </div>
     <div class="col-12 col-md-3 py-2 d-flex flex-column justify-content-center">
     {% if result.download_link %}
-        <div class="d-grid gap-2 d-md-block" style="width:100%" {% if QB_STATUS != 'CONNECTED' %}title="qBittorrent is not connected."{% endif %}>
+        <div class="d-grid gap-2 d-md-block" style="width:100%" {% if CLIENT_STATUS != 'CONNECTED' %}title="Torrent client is not connected."{% endif %}>
             <button type="button" 
-                    class="btn btn-primary add-to-qbittorrent-button" 
+                    class="btn btn-primary add-to-client-button" 
                     style="width:100%"
                     data-torrent-url="{{ result.download_link | safe }}"
                     data-author="{{ result.author_info }}"
                     data-title="{{ result.title }}"
                     data-id="{{ result.id }}"
-                    {% if QB_STATUS != 'CONNECTED' %}disabled{% endif %}>
-                Add to qBittorrent
+                    {% if CLIENT_STATUS != 'CONNECTED' %}disabled{% endif %}>
+                Add to Client
             </button>
         </div>
         
         <select name="category" class="form-select category-dropdown mt-2">
-            <option value="" {% if not QB_CATEGORY %}selected{% endif %}>Category</option>
+            <option value="" {% if not TORRENT_CLIENT_CATEGORY %}selected{% endif %}>Category</option>
             {% for category_name, category_info in categories.items() %}
             <option value="{{ category_name }}" 
-                    {% if QB_CATEGORY == category_name %}selected{% endif %}>
+                    {% if TORRENT_CLIENT_CATEGORY == category_name %}selected{% endif %}>
                 {{ category_name }}
             </option>
             {% endfor %}

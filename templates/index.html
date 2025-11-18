@@ -307,21 +307,21 @@
   <button class="btn btn-primary w-100 py-2" id="searchButton" type="submit">Search</button>
 </form>
 
-        <div class="accordion my-3" id="qbAccordion">
+        <div class="accordion my-3" id="clientAccordion">
           <div class="accordion-item">
-            <h2 class="accordion-header" id="qbAccordionHeading">
+            <h2 class="accordion-header" id="clientAccordionHeading">
               <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
-                data-bs-target="#qbAccordionCollapse" aria-expanded="true" aria-controls="qbAccordionCollapse">
-                qBittorrent<span id="qb-status-icon" class="ms-2"></span>
+                data-bs-target="#clientAccordionCollapse" aria-expanded="true" aria-controls="clientAccordionCollapse">
+                <span id="client-type-display">{{ TORRENT_CLIENT_TYPE|title if TORRENT_CLIENT_TYPE else 'Torrent Client' }}</span><span id="client-status-icon" class="ms-2"></span>
               </button>
             </h2>
-            <div id="qbAccordionCollapse" class="accordion-collapse collapse" aria-labelledby="qbAccordionHeading"
-              data-bs-parent="#qbAccordion">
+            <div id="clientAccordionCollapse" class="accordion-collapse collapse" aria-labelledby="clientAccordionHeading"
+              data-bs-parent="#clientAccordion">
               <div class="accordion-body">
-                <a href="{{ QB_URL }}" id="qbLink" target="_blank" class="">{{ QB_URL }}</a>
+                <a href="{{ TORRENT_CLIENT_URL }}" id="clientLink" target="_blank" class="">{{ TORRENT_CLIENT_URL }}</a>
                 <br>
-                Status: <span id="qb-status" class="{{ 'text-success' if QB_STATUS == 'CONNECTED' else 'text-danger' }}">
-                  {{ QB_STATUS }}
+                Status: <span id="client-status" class="{{ 'text-success' if CLIENT_STATUS == 'CONNECTED' else 'text-danger' }}">
+                  {{ CLIENT_STATUS or 'NOT CONNECTED' }}
                 </span>
               </div>
             </div>
@@ -374,24 +374,31 @@
     </div>
     <div class="offcanvas-body">
       <form id="settings-form">
-        <h5 class="text-center border-bottom pb-2 mb-0">qBittorrent</h5>
+        <h5 class="text-center border-bottom pb-2 mb-0">Torrent Client Settings</h5>
         <div class="mb-3">
-          <label for="QB_URL" class="form-label">qBittorrent URL</label>
-          <input type="text" class="form-control" id="QB_URL" name="QB_URL" value="{{ QB_URL }}" required />
+          <label for="TORRENT_CLIENT_TYPE" class="form-label">Client Type</label>
+          <select class="form-select" id="TORRENT_CLIENT_TYPE" name="TORRENT_CLIENT_TYPE">
+            <option value="qbittorrent" {% if (TORRENT_CLIENT_TYPE or 'qbittorrent') == 'qbittorrent' %}selected{% endif %}>qBittorrent</option>
+            <option value="transmission" disabled>Transmission (Coming Soon)</option>
+          </select>
         </div>
         <div class="mb-3">
-          <label for="QB_USERNAME" class="form-label">Username</label>
-          <input type="text" class="form-control" id="QB_USERNAME" name="QB_USERNAME" value="{{ QB_USERNAME }}"
+          <label for="TORRENT_CLIENT_URL" class="form-label">Client URL</label>
+          <input type="text" class="form-control" id="TORRENT_CLIENT_URL" name="TORRENT_CLIENT_URL" value="{{ TORRENT_CLIENT_URL }}" required />
+        </div>
+        <div class="mb-3">
+          <label for="TORRENT_CLIENT_USERNAME" class="form-label">Username</label>
+          <input type="text" class="form-control" id="TORRENT_CLIENT_USERNAME" name="TORRENT_CLIENT_USERNAME" value="{{ TORRENT_CLIENT_USERNAME }}"
             required />
         </div>
         <div class="mb-3">
-          <label for="QB_PASSWORD" class="form-label">Password</label>
-          <input type="password" class="form-control" id="QB_PASSWORD" name="QB_PASSWORD" value="{{ QB_PASSWORD }}"
+          <label for="TORRENT_CLIENT_PASSWORD" class="form-label">Password</label>
+          <input type="password" class="form-control" id="TORRENT_CLIENT_PASSWORD" name="TORRENT_CLIENT_PASSWORD" value="{{ TORRENT_CLIENT_PASSWORD }}"
             required />
         </div>
         <div class="mb-3">
-          <label for="QB_CATEGORY" class="form-label">Default category</label>
-          <input type="text" class="form-control" id="QB_CATEGORY" name="QB_CATEGORY" value="{{ QB_CATEGORY }}" />
+          <label for="TORRENT_CLIENT_CATEGORY" class="form-label">Default category</label>
+          <input type="text" class="form-control" id="TORRENT_CLIENT_CATEGORY" name="TORRENT_CLIENT_CATEGORY" value="{{ TORRENT_CLIENT_CATEGORY }}" />
         </div>
 
         <h5 class="text-center border-bottom pb-2">MyAnonaMouse</h5>
