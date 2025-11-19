@@ -235,7 +235,7 @@ async def monitor_downloads_loop():
             active_hashes = list(monitoring_state.keys())
             torrents_info = {}
             
-# FETCH DATA
+            # FETCH DATA
             try:
                 if hasattr(torrent_client, 'get_torrent_info_batch'):
                     batch_res = await torrent_client.get_torrent_info_batch(active_hashes)
@@ -246,29 +246,28 @@ async def monitor_downloads_loop():
                         info = await torrent_client.get_torrent_info(h)
                         if info: torrents_info[h] = info
                 
-                # --- LOGGING PATCH START ---
                 if torrents_info:
                     status_summary = []
                     for h, info in torrents_info.items():
                         p = info.get('progress', 0) * 100
                         eta = info.get('eta', 8640000)
-                        # qBit uses 8640000 for "Infinity/Unknown"
                         eta_str = f"{eta}s" if eta < 8640000 else "Unknown"
                         status_summary.append(f"{h[:6]}..: {p:.1f}% (ETA: {eta_str})")
                     
                     app.logger.debug(f"[MONITOR] Polled {len(torrents_info)} item(s): {', '.join(status_summary)}")
-                # --- LOGGING PATCH END ---
 
             except Exception as e:
                 app.logger.warning(f"[MONITOR] Fetch failed (session expired?): {e}")
-                client_session_active = False # Force re-login next loop
+                client_session_active = False 
                 await asyncio.sleep(1)
                 continue
 
             finished_hashes = []
-            lowest_eta = None
             current_time = time.time()
-            high_freq_needed = False
+            
+            # Logic Flags
+            force_high_freq = False
+            valid_etas_for_sleep = []
 
             for h, info in torrents_info.items():
                 # UPDATE CACHE
@@ -277,24 +276,53 @@ async def monitor_downloads_loop():
                     "timestamp": current_time
                 }
 
+                # --- HISTORY & STABILITY LOGIC ---
+                # 1. Lazy Init History in monitoring_state
+                # This ensures we don't crash if the key is missing
+                state_entry = monitoring_state.get(h)
+                if not state_entry: continue 
+                eta_history = state_entry.setdefault('eta_history', [])
+
                 state = info.get('state', 'unknown')
                 progress = info.get('progress', 0)
+                current_eta = info.get('eta', 8640000)
                 
+                # Check completion
                 is_complete = state in ['uploading', 'stalledUP', 'forcedUP', 'pausedUP', 'checkingUP']
                 if progress >= 1 and state not in ['error', 'missingFiles']:
                     is_complete = True
 
                 if is_complete:
                     finished_hashes.append(h)
+                    continue # Skip frequency logic for finished items
+
+                # 2. Update Rolling History (Max 5 items)
+                eta_history.append(current_eta)
+                if len(eta_history) > 5:
+                    eta_history.pop(0)
+
+                # 3. Check "Initial Phase" (First 15s)
+                added_at = state_entry.get('added_at', 0)
+                if current_time - added_at < 15:
+                    force_high_freq = True
+                    continue # Must poll fast, ignore stability
+                
+                # 4. Check Stability (Rolling 5, min >= 80% of max)
+                is_stable = False
+                if len(eta_history) == 5:
+                    min_eta = min(eta_history)
+                    max_eta = max(eta_history)
+                    # If max is 0, we are effectively finished, treat as stable
+                    if max_eta == 0 or min_eta >= (0.8 * max_eta):
+                        is_stable = True
+                
+                if not is_stable:
+                    force_high_freq = True
                 else:
-                    added_at = monitoring_state.get(h, {}).get('added_at', 0)
-                    if current_time - added_at < 15:
-                        high_freq_needed = True
-                    
-                    eta = info.get('eta', 8640000)
-                    if eta < 8640000: 
-                        if lowest_eta is None or eta < lowest_eta:
-                            lowest_eta = eta
+                    # Stable: Allow this ETA to influence the sleep calculation
+                    valid_etas_for_sleep.append(current_eta)
+
+            # --- END LOOP OVER ITEMS ---
 
             for h in finished_hashes:
                 app.logger.info(f"[MONITOR] Torrent {h} finished. Triggering Auto-Organize.")
@@ -314,18 +342,25 @@ async def monitor_downloads_loop():
                 await asyncio.sleep(2) 
                 continue
 
-            if high_freq_needed:
+            # --- SLEEP CALCULATION ---
+            sleep_reason = ""
+            if force_high_freq:
                 sleep_time = 1
-            elif lowest_eta is not None:
+                sleep_reason = "High Freq (Initial/Unstable)"
+            elif valid_etas_for_sleep:
+                lowest_eta = min(valid_etas_for_sleep)
+                # ETA / 2 logic
                 sleep_time = max(2, int(lowest_eta / 2))
+                # Configurable cap (hardcoded 30s as requested)
                 sleep_time = min(sleep_time, 30)
+                sleep_reason = f"Stable Backoff (min ETA: {lowest_eta}s)"
             else:
-                sleep_time = 5
+                # Fallback if we have active downloads but none fell into valid buckets
+                # (e.g. all < 5 history points but > 15s old? Treat as unstable)
+                sleep_time = 1
+                sleep_reason = "Fallback (Insufficient Data)"
             
-            # --- PATCH START: Log the planned sleep time ---
-            app.logger.debug(f"[MONITOR] Sleeping {sleep_time}s (ETA logic applied)")
-            # --- PATCH END ---
-            
+            app.logger.debug(f"[MONITOR] Sleeping {sleep_time}s [{sleep_reason}]")
             await asyncio.sleep(sleep_time)
 
         except Exception as e:
