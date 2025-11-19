@@ -129,14 +129,15 @@ FALLBACK_CONFIG = {
 
 # Set up data directory and paths
 DATA_PATH = Path(os.getenv("DATA_PATH", FALLBACK_CONFIG["DATA_PATH"])).resolve()
-ORGANIZED_PATH = Path(os.getenv("ORGANIZED_PATH", FALLBACK_CONFIG["ORGANIZED_PATH"])).resolve()
-TORRENT_DOWNLOAD_PATH = Path(os.getenv("TORRENT_DOWNLOAD_PATH", FALLBACK_CONFIG["TORRENT_DOWNLOAD_PATH"])).resolve()
-
 DATA_PATH.mkdir(parents=True, exist_ok=True)
 
 CONFIG_FILE = DATA_PATH / "config.json"
 METADATA_FILE = DATA_PATH / "database.json"
 IP_STATE_FILE = DATA_PATH / "ip_state.json"
+
+# These will be set from config
+ORGANIZED_PATH = None
+TORRENT_DOWNLOAD_PATH = None
 
 def load_config():
     config = FALLBACK_CONFIG.copy()
@@ -182,6 +183,12 @@ async def load_new_app_config():
     }
     app.config["BASE_HEADERS"] = {k: v for k, v in app.config["BASE_HEADERS"].items() if v is not None}
     
+    # Update path globals from config
+    global ORGANIZED_PATH, TORRENT_DOWNLOAD_PATH
+    ORGANIZED_PATH = Path(new_config.get("ORGANIZED_PATH", FALLBACK_CONFIG["ORGANIZED_PATH"])).resolve()
+    TORRENT_DOWNLOAD_PATH = Path(new_config.get("TORRENT_DOWNLOAD_PATH", FALLBACK_CONFIG["TORRENT_DOWNLOAD_PATH"])).resolve()
+    app.logger.info(f"Paths updated - ORGANIZED: {ORGANIZED_PATH}, DOWNLOAD: {TORRENT_DOWNLOAD_PATH}")
+    
     global mam_session_cookies
     mam_session_cookies = {"mam_id": app.config.get("MAM_ID")}
 
@@ -202,6 +209,10 @@ app.config["BASE_HEADERS"] = {
 }
 mam_session_cookies = {"mam_id": initial_config.get("MAM_ID")}
 torrent_client = None
+
+# Initialize path globals from initial config
+ORGANIZED_PATH = Path(initial_config.get("ORGANIZED_PATH", FALLBACK_CONFIG["ORGANIZED_PATH"])).resolve()
+TORRENT_DOWNLOAD_PATH = Path(initial_config.get("TORRENT_DOWNLOAD_PATH", FALLBACK_CONFIG["TORRENT_DOWNLOAD_PATH"])).resolve()
 
 # --- ACTIVE MONITORING & CACHING LOGIC ---
 
