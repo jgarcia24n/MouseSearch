@@ -135,7 +135,7 @@ TORRENT_DOWNLOAD_PATH = Path(os.getenv("TORRENT_DOWNLOAD_PATH", FALLBACK_CONFIG[
 DATA_PATH.mkdir(parents=True, exist_ok=True)
 
 CONFIG_FILE = DATA_PATH / "config.json"
-METADATA_FILE = DATA_PATH / "metadata.json"
+METADATA_FILE = DATA_PATH / "database.json"
 IP_STATE_FILE = DATA_PATH / "ip_state.json"
 
 def load_config():
