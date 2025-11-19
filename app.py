@@ -858,6 +858,10 @@ if app.config.get("AUTO_ORGANIZE_ON_SCHEDULE"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", default=5000, type=int)
+    parser.add_argument("--port", default=None, type=int)
     args = parser.parse_args()
-    app.run(host=args.host, port=args.port, debug=True, use_reloader=False)
+    
+    # Priority: CLI arg > PORT env var > hardcoded default (5000)
+    port = args.port or int(os.getenv("PORT", 5000))
+    
+    app.run(host=args.host, port=port, debug=True, use_reloader=False)

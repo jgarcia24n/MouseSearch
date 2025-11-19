@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py language_dict.py ./
 COPY static ./static
 COPY templates ./templates
+COPY clients ./clients
 
 # Make port 5000 available to the world outside this container
 EXPOSE 5000
