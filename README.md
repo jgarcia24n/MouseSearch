@@ -172,8 +172,9 @@ services:
       - "5000:5000"
     volumes:
       - ./data:/data  # location that config and state files will be stored
-      # - /downloads:/downloads # if using auto-organize
-
+      # - /downloads:/downloads # where all downloads are stored (torrent client downloads and organized files) -- only needed if using auto-organize
+      # see README.md for recommended structure and paths
+      
     # env_file: .env # optional: load environment variables from a file
 
     # Optional: Set the container's timezone to match your host (useful for logs and scheduled tasks)
