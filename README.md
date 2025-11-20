@@ -201,7 +201,7 @@ The application will be available at `http://<your-server-ip>:5000`.
 3.  **Configure your settings:** You can configure all settings directly through the web interface, or use the `.env` file.
 4.  Once configured, the dashboards should automatically update to "CONNECTED" and populate your user info.
 4.  Use the search bar to find content.
-5.  In the results, select a torrent category (if desired) and click "Add to Client".
+5.  In the results, select a torrent category (if desired) and click "Download".
 6.  The torrent will be added, and a status badge will appear, polling your torrent client for live progress.
 
 ---

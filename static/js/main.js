@@ -152,7 +152,35 @@ async function getTorrentHashByMID(torrentId) {
 }
 
 /**
+ * Formats seconds into a human-readable string (e.g., 1h 5m 30s)
+ * Imported from progressBarETA branch
+ */
+function formatDuration(seconds) {
+    if (seconds >= 8640000) return '∞'; // Backend sends 8640000 for unknown/infinite
+    if (seconds <= 0) return '0s';
+
+    const units = [
+        { label: 'd', value: 86400 },
+        { label: 'h', value: 3600 },
+        { label: 'm', value: 60 },
+        { label: 's', value: 1 }
+    ];
+
+    let result = [];
+    for (const unit of units) {
+        if (seconds >= unit.value) {
+            const count = Math.floor(seconds / unit.value);
+            seconds %= unit.value;
+            result.push(count + unit.label);
+        }
+    }
+    // Return top 2 units for brevity (e.g., "1h 30m" instead of "1h 30m 15s")
+    return result.slice(0, 2).join(' ');
+}
+
+/**
  * Updates the UI for a specific torrent based on its data.
+ * MERGED: Uses the visual style of progressBarETA
  */
 function updateTorrentUI(hash, data, resultItem) {
     const statusContainer = resultItem.querySelector('.torrent-status-container');
@@ -160,40 +188,64 @@ function updateTorrentUI(hash, data, resultItem) {
         console.error(`[UI-UPDATE] Could not find status container for hash ${hash}`);
         return;
     }
-    
+
     const state = data.state || 'unknown';
-    const progress = ((data.progress || 0) * 100).toFixed(0);
-    let badgeType = 'secondary';
-    let simplifiedState = 'Unknown';
-    
-    // Simplified state mapping
-    if (['error', 'missingFiles'].includes(state)) {
-        simplifiedState = 'Error';
-        badgeType = 'danger';
-    } else if (['uploading', 'stalledUP', 'checkingUP', 'forcedUP', 'pausedUP'].includes(state)) {
-        simplifiedState = 'Seeding';
-        badgeType = 'success';
-    } else if (['downloading', 'metaDL', 'stalledDL', 'checkingDL', 'forcedDL', 'allocating', 'moving', 'checkingResumeData'].includes(state)) {
-        simplifiedState = 'Downloading';
-        badgeType = 'primary';
-    } else if (['pausedDL'].includes(state)) {
-        simplifiedState = 'Paused';
-        badgeType = 'secondary';
-    } else if (['queuedUP', 'queuedDL'].includes(state)) {
-        simplifiedState = 'Queued';
-        badgeType = 'info';
+    // Progress comes as decimal (0.0 to 1.0)
+    const progressPercent = Math.floor((data.progress || 0) * 100);
+    const etaSeconds = data.eta || 0;
+
+    // Define state groups
+    const errorStates = ['error', 'missingFiles'];
+    const seedingStates = ['uploading', 'stalledUP', 'checkingUP', 'forcedUP', 'pausedUP', 'queuedUP'];
+    const downloadingStates = ['downloading', 'metaDL', 'stalledDL', 'checkingDL', 'forcedDL', 'allocating', 'moving', 'checkingResumeData', 'queuedDL', 'pausedDL'];
+
+    let htmlContent = '';
+
+    if (downloadingStates.includes(state)) {
+        // --- RENDER BOOTSTRAP PROGRESS BAR FOR DOWNLOADING ---
+        const isPaused = state.includes('paused');
+        const animatedClass = isPaused ? '' : 'progress-bar-striped progress-bar-animated';
+        const bgClass = isPaused ? 'bg-secondary' : 'bg-primary';
+        const etaText = isPaused ? 'Paused' : `ETA: ${formatDuration(etaSeconds)}`;
+        const stateLabel = state === 'metaDL' ? 'Metadata' : (isPaused ? 'Paused' : 'Downloading');
+
+        htmlContent = `
+            <div class="d-flex justify-content-between small mb-1 text-muted">
+                <span>${stateLabel}</span>
+                <span>${etaText}</span>
+            </div>
+            <div class="progress" role="progressbar" aria-label="Download progress" aria-valuenow="${progressPercent}" aria-valuemin="0" aria-valuemax="100" style="height: 20px;">
+                <div class="progress-bar ${animatedClass} ${bgClass}" style="width: ${progressPercent}%">
+                    ${progressPercent}%
+                </div>
+            </div>
+        `;
+    } else if (seedingStates.includes(state) || progressPercent >= 100) {
+        // --- RENDER SUCCESS BADGE/BAR FOR SEEDING/COMPLETED ---
+        htmlContent = `
+             <div class="d-flex justify-content-between small mb-1 text-success">
+                <span>Complete</span>
+                <span><i class="bi bi-check-all"></i></span>
+            </div>
+            <div class="progress" role="progressbar" aria-label="Seeding" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100" style="height: 20px;">
+                <div class="progress-bar bg-success" style="width: 100%">
+                    Seeding
+                </div>
+            </div>
+        `;
+    } else if (errorStates.includes(state)) {
+        // --- RENDER ERROR STATE ---
+        htmlContent = `
+            <div class="alert alert-danger py-1 px-2 mb-0 small text-center">
+                <i class="bi bi-exclamation-triangle-fill"></i> Error: ${state}
+            </div>
+        `;
     } else {
-        simplifiedState = 'Unknown';
-        badgeType = 'warning';
+        // --- FALLBACK ---
+        htmlContent = `<div class="badge bg-secondary">State: ${state}</div>`;
     }
-    
-    const statusHtml = `
-        <div class="small lh-sm">
-            <div class="d-flex align-items-center">Status: <div class="badge bg-${badgeType} m-1"><b>${simplifiedState}</b></div></div>
-            <div class="d-flex align-items-center">Downloaded: <div class="badge bg-${badgeType} m-1"><b>${progress}%</b></div></div>
-        </div>
-    `;
-    statusContainer.innerHTML = statusHtml;
+
+    statusContainer.innerHTML = htmlContent;
 }
 
 /**
@@ -561,7 +613,7 @@ document.addEventListener("DOMContentLoaded", function () {
             // Find the category dropdown within the same result item
             const category = resultItem.querySelector('.category-dropdown')?.value || '';
 
-            console.log(`[ADD] 'Add to Client' clicked for URL: ${torrentUrl} with category: '${category}'`);
+            console.log(`[ADD] 'Download' clicked for URL: ${torrentUrl} with category: '${category}'`);
 
             button.disabled = true;
             fetch('/client/add', {

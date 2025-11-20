@@ -408,16 +408,16 @@ async def monitor_downloads_loop():
 
             for h in finished_hashes:
                 app.logger.info(f"[MONITOR] Torrent {h} finished. Triggering Auto-Organize.")
-                
-                # Broadcast final status update before removing from monitoring
+
+                # --- MERGE ADDITION START: Broadcast final 100% status to UI ---
                 if h in torrents_info:
                     final_status = {h: torrents_info[h]}
                     await broadcast_payload({
                         "event": "torrent-progress",
                         "torrents": final_status
                     })
-                    app.logger.debug(f"[MONITOR] Broadcasted final status for completed torrent {h[:8]}...")
-                
+                # --- MERGE ADDITION END ---
+
                 try:
                     success, msg = await _perform_organization(h)
                     if not success:
@@ -1092,6 +1092,7 @@ async def events():
         try:
             while True:
                 # Wait for new data, but timeout every 15 seconds to send a heartbeat
+                yield ": connected\n\n"
                 try:
                     # Wait for a real message
                     data = await asyncio.wait_for(queue.get(), timeout=15.0)
