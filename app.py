@@ -119,7 +119,7 @@ FALLBACK_CONFIG = {
     "CF_ACCESS_CLIENT_SECRET": None,
     "DATA_PATH": "./data",
     "ORGANIZED_PATH": "/downloads/organized",
-    "TORRENT_DOWNLOAD_PATH": "/downloads/torrents/organize-these/audiobooks",
+    "TORRENT_DOWNLOAD_PATH": "/downloads/torrents",
     "AUTO_ORGANIZE_ON_ADD": False,
     "AUTO_ORGANIZE_ON_SCHEDULE": False,
     "AUTO_ORGANIZE_INTERVAL_HOURS": 1,

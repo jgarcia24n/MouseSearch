@@ -144,8 +144,8 @@ MouseSearch supports modular torrent clients. Currently supported: **qBittorrent
 | `AUTO_ORGANIZE_ON_ADD` | No | Set to `true` to enable auto-organization when torrents are added. Defaults to `false`. |
 | `AUTO_ORGANIZE_ON_SCHEDULE` | No | Set to `true` to enable scheduled auto-organization. Defaults to `false`. |
 | `AUTO_ORGANIZE_INTERVAL_HOURS` | No | Number of hours between scheduled organization scans (only applies if `AUTO_ORGANIZE_ON_SCHEDULE` is `true`). Defaults to `1`. |
-| `ORGANIZED_PATH` | If auto-organization is enabled | The *container* path for your organized library (e.g., `/downloads/organized/audiobooks`). |
-| `TORRENT_DOWNLOAD_PATH` | If auto-organization is enabled | The *container* path where your torrent client saves completed files for this category (e.g., `/downloads/torrents/audiobooks`). |
+| `ORGANIZED_PATH` | If auto-organization is enabled | The *container* path for your organized library (e.g., `/downloads/organized/`). |
+| `TORRENT_DOWNLOAD_PATH` | If auto-organization is enabled | The *container* path where your torrent client saves completed files for this category (e.g., `/downloads/torrents/`). |
 
 **How to find your `MAM_ID`:**
 1.  In any web browser, navigate to [Security](https://www.myanonamouse.net/preferences/index.php?view=security) on Myanonamouse
@@ -233,9 +233,9 @@ These can be enabled independently of each other:
 2.  When `AUTO_ORGANIZE_ON_SCHEDULE` is enabled, the app includes a scheduler that runs at the configured interval (default: every hour, configurable via `AUTO_ORGANIZE_INTERVAL_HOURS`) to check for unorganized files.
 3.  Both methods check `database.json` for any torrents marked as `organized: false`.
 4.  For each unorganized torrent, it:
-    a.  Asks your torrent client for its file path (e.g., `/downloads/torrents/audiobooks/Some.Book.by.Some.Author`).
+    a.  Asks your torrent client for its file path (e.g., `/downloads/torrents/Some.Book.by.Some.Author`).
     b.  Sanitizes the Author ("Some Author") and Title ("Some Book") using metadata from Myanonamouse.
-    c.  Creates the destination path: `/downloads/organized/audiobooks/Some Author/Some Book`.
+    c.  Creates the destination path: `/downloads/organized/Some Author/Some Book`.
     d.  Scans the source directory for all files and hard-links each one to the destination, maintaining the original torrent folder structure
     e.  Marks the torrent as `organized: true` in `database.json` (to prevent re-organizing later)
 
@@ -249,20 +249,16 @@ The easiest way to ensure this is to have a single parent directory (e.g., `/mnt
 
        downloads
        ├── organized <- where your organized files will appear (point Audiobookshelf here)
-       │   ├── audiobooks
-       │   └── ebooks
        └── torrents <- where your torrent client downloads files to
-           ├── audiobooks
-           └── ebooks
 
 
 **Correct `.env` and Host Path Example:**
 
 * **Host Path:** `/mnt/storage/downloads`
 * **Volume Mount (Docker):** `- /mnt/storage/downloads:/downloads`
-* **.env `TORRENT_DOWNLOAD_PATH`:** `/downloads/torrents/audiobooks`
-* **.env `ORGANIZED_PATH`:** `/downloads/organized/audiobooks`
+* **.env `TORRENT_DOWNLOAD_PATH`:** `/downloads/torrents/`
+* **.env `ORGANIZED_PATH`:** `/downloads/organized/`
 
-**For Bare Metal installations:** Simply use absolute paths on your host system, again ensuring they are both on the same fileysystem/disk (e.g., `/mnt/storage/downloads/torrents/audiobooks` and `/mnt/storage/downloads/organized/audiobooks`).
+**For Bare Metal installations:** Simply use absolute paths on your host system, again ensuring they are both on the same fileysystem/disk (e.g., `/mnt/storage/downloads/torrents/` and `/mnt/storage/downloads/organized/`).
 
 This setup guarantees that both paths point to the same underlying device, allowing hard links to be created.
