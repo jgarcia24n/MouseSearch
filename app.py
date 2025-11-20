@@ -34,7 +34,10 @@ UPSTREAM_CLIENT: httpx.AsyncClient | None = None
 monitoring_state = {} 
 monitor_task = None
 torrent_status_cache = {}
-CACHE_TTL = 2.0 
+CACHE_TTL = 2.0
+
+# --- SSE Globals ---
+connected_websockets = set() 
 
 @app.before_serving
 async def startup():
@@ -345,7 +348,12 @@ async def monitor_downloads_loop():
 
             for h in finished_hashes:
                 app.logger.info(f"[MONITOR] Torrent {h} finished. Triggering Auto-Organize.")
-                await _perform_organization(h)
+                try:
+                    success, msg = await _perform_organization(h)
+                    if not success:
+                        app.logger.warning(f"[MONITOR] Auto-organize failed for {h}: {msg}")
+                except Exception as e:
+                    app.logger.error(f"[MONITOR] Exception during auto-organize for {h}: {e}", exc_info=True)
                 if h in monitoring_state:
                     del monitoring_state[h]
 
@@ -637,6 +645,20 @@ def save_metadata(data):
 def sanitize_filename(name: str) -> str:
     sanitized = re.sub(r'[<>:"/\\|?*]', '', name)
     return sanitized.strip('. ') if sanitized else "Untitled"
+
+async def broadcast_toast(message: str, category: str = "primary"):
+    """Broadcast a toast notification to all connected SSE clients."""
+    payload = json.dumps({"message": message, "type": category})
+    disconnected = set()
+    for queue in connected_websockets:
+        try:
+            await queue.put(payload)
+        except Exception as e:
+            app.logger.debug(f"Failed to broadcast to queue: {e}")
+            disconnected.add(queue)
+    # Clean up disconnected queues
+    for queue in disconnected:
+        connected_websockets.discard(queue)
     
 @app.route('/calculate_hash', methods=['POST'])
 async def get_torrent_hash():
@@ -798,11 +820,13 @@ async def _perform_organization(hash_val: str) -> tuple[bool, str]:
     # Try to rely on session, fall back to explicit login
     try:
         info = await torrent_client.get_torrent_info(hash_val)
-    except:
+    except Exception as e:
+        app.logger.warning(f"[ORGANIZE] Initial client fetch failed for {hash_val}: {e}. Attempting login.")
         await torrent_client.login()
         try:
             info = await torrent_client.get_torrent_info(hash_val)
         except Exception as e:
+            app.logger.error(f"[ORGANIZE] Client fetch error for {hash_val}: {e}")
             return False, f"Client fetch error: {e}"
 
     if not info: return False, f"Torrent {hash_val} not found in client."
@@ -812,20 +836,35 @@ async def _perform_organization(hash_val: str) -> tuple[bool, str]:
     torrent_meta = metadata[hash_val]
     dest_path = organized_path / sanitize_filename(torrent_meta['author']) / sanitize_filename(torrent_meta['title'])
     
+    # Wait up to 10s for the filesystem to settle (fix for "Move on Completion" race condition)
+    for _ in range(5):
+        if content_path.exists():
+            break
+        await asyncio.sleep(2)
+    
     if not content_path.exists(): 
         app.logger.debug(f"[ORGANIZE] Source path missing: {content_path}")
+        await broadcast_toast(f"Auto-organization failed for '{torrent_meta.get('title', 'Unknown')}': Source path missing", "danger")
         return False, f"Source missing: {content_path}"
     
     try: dest_path.mkdir(parents=True, exist_ok=True)
-    except Exception as e: return False, f"Dest create failed: {e}"
+    except Exception as e:
+        app.logger.error(f"[ORGANIZE] Failed to create destination path {dest_path}: {e}")
+        return False, f"Dest create failed: {e}"
     
     files_linked, files_exist = 0, 0
-    source_files = content_path.rglob('*') if content_path.is_dir() else [content_path]
+    
+    if content_path.is_dir():
+        source_files = content_path.rglob('*')
+        base_path = content_path
+    else:
+        source_files = [content_path]
+        base_path = content_path.parent  # Use parent so relative_to keeps the filename
     
     for source_file in source_files:
         if source_file.is_file():
             # NO FILTERING: Link everything found in the torrent
-            rel_path = source_file.relative_to(content_path)
+            rel_path = source_file.relative_to(base_path)
             dest_file = dest_path / rel_path
             dest_file.parent.mkdir(parents=True, exist_ok=True)
             if dest_file.exists(): 
@@ -843,28 +882,70 @@ async def _perform_organization(hash_val: str) -> tuple[bool, str]:
     if total == 0:
         metadata[hash_val]['retry_count'] += 1
         save_metadata(metadata)
+        await broadcast_toast(f"Auto-organization failed for '{torrent_meta.get('title', 'Unknown')}': No files linked", "warning")
         return False, "No files found."
     
     metadata[hash_val]['organized'] = True
     save_metadata(metadata)
+    await broadcast_toast(f"Auto-organized '{torrent_meta.get('title', 'Unknown')}': {files_linked} linked, {files_exist} existed", "success")
     return True, f"Success: {files_linked} linked, {files_exist} existed."
+
+@app.route('/events')
+async def events():
+    """Server-Sent Events endpoint for real-time toast notifications."""
+    queue = asyncio.Queue()
+    connected_websockets.add(queue)
+    
+    async def event_stream():
+        try:
+            while True:
+                data = await queue.get()
+                yield f"data: {data}\n\n"
+        finally:
+            connected_websockets.discard(queue)
+    
+    return Response(event_stream(), mimetype='text/event-stream')
 
 @app.route('/organize', methods=['POST'])
 @app.route('/organize/<hash_val>', methods=['POST'])
 async def organize_torrent_webhook(hash_val=None):
     async with app.app_context():
         if hash_val:
-            success, msg = await _perform_organization(hash_val)
-            return jsonify({'status': 'success' if success else 'error', 'message': msg}), 200 if success else 500
+            try:
+                success, msg = await _perform_organization(hash_val)
+                return jsonify({'status': 'success' if success else 'error', 'message': msg}), 200 if success else 500
+            except Exception as e:
+                app.logger.error(f"[ORGANIZE] Exception during organization of {hash_val}: {e}", exc_info=True)
+                return jsonify({'status': 'error', 'message': f'Internal error: {str(e)}'}), 500
         else:
             metadata = load_metadata()
             unorganized = [h for h, m in metadata.items() if not m.get('organized', False)]
-            results = {'succeeded': 0, 'failed': 0}
+            results = {'succeeded': 0, 'failed': 0, 'errors': []}
             for h in unorganized:
-                s, m = await _perform_organization(h)
-                if s: results['succeeded'] += 1
-                else: results['failed'] += 1
-            return jsonify({'status': 'success', 'results': results}), 200
+                try:
+                    s, m = await _perform_organization(h)
+                    if s: results['succeeded'] += 1
+                    else:
+                        results['failed'] += 1
+                        results['errors'].append({'hash': h[:8], 'message': m})
+                except Exception as e:
+                    results['failed'] += 1
+                    error_msg = f"Exception: {str(e)}"
+                    results['errors'].append({'hash': h[:8], 'message': error_msg})
+                    app.logger.error(f"[ORGANIZE] Exception during organization of {h}: {e}", exc_info=True)
+            
+            # Determine overall status
+            if results['failed'] > 0 and results['succeeded'] == 0:
+                status_code = 500
+                overall_status = 'error'
+            elif results['failed'] > 0:
+                status_code = 207  # Multi-Status (partial success)
+                overall_status = 'partial'
+            else:
+                status_code = 200
+                overall_status = 'success'
+            
+            return jsonify({'status': overall_status, 'results': results}), status_code
 
 async def check_for_unorganized_torrents():
     """Safety net job."""
@@ -873,7 +954,12 @@ async def check_for_unorganized_torrents():
         metadata = load_metadata()
         unorganized = [h for h, m in metadata.items() if not m.get('organized', False)]
         for h in unorganized:
-            await _perform_organization(h)
+            try:
+                success, msg = await _perform_organization(h)
+                if not success:
+                    app.logger.warning(f"[SAFETY NET] Organization failed for {h}: {msg}")
+            except Exception as e:
+                app.logger.error(f"[SAFETY NET] Exception during organization of {h}: {e}", exc_info=True)
 
 if app.config.get("AUTO_ORGANIZE_ON_SCHEDULE"):
     hours = int(app.config.get("AUTO_ORGANIZE_INTERVAL_HOURS", 1))

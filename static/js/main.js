@@ -30,6 +30,29 @@ const hashRetryCount = new Map(); // Maps hash -> number of retries for "not fou
 const MAX_RETRIES = 10; // Maximum retries before giving up (20 seconds with 2s interval)
 let batchPollingInterval = null;
 
+/**
+ * Initializes Server-Sent Events (SSE) connection for real-time toast notifications.
+ */
+function initializeEventStream() {
+    const eventSource = new EventSource('/events');
+    
+    eventSource.onmessage = function(event) {
+        try {
+            const data = JSON.parse(event.data);
+            showToast(data.message, data.type);
+        } catch (error) {
+            console.error('[SSE] Failed to parse event data:', error);
+        }
+    };
+    
+    eventSource.onerror = function(error) {
+        console.error('[SSE] EventSource error:', error);
+        // EventSource will automatically reconnect
+    };
+    
+    console.log('[SSE] Event stream initialized');
+}
+
 async function getTorrentHash(torrentId, torrentUrl) {
     // 1. Check the cache using the STABLE torrent ID
     if (torrentHashMap[torrentId]) {
@@ -427,6 +450,9 @@ document.addEventListener("DOMContentLoaded", function () {
     const searchButton = document.getElementById("searchButton");
     const wrapper = document.getElementById('results-container-wrapper');
     const resultsTitle = document.getElementById('results-title');
+
+    // Initialize SSE for real-time notifications
+    initializeEventStream();
 
     checkClientStatus();
     loadMamUserData();
