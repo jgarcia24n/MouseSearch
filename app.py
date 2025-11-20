@@ -23,7 +23,7 @@ from language_dict import language_dict
 
 import asyncio
 
-from clients import get_torrent_client
+from clients import get_torrent_client, get_client_display_name
 
 # --- SCHEDULER AND STATE SETUP ---
 app = Quart(__name__)
@@ -733,7 +733,11 @@ async def mam_search():
 
 @app.route("/")
 async def index():
-    return await render_template("index.html", **app.config)
+    # Determine display name dynamically from the class
+    c_type = app.config.get("TORRENT_CLIENT_TYPE", "qbittorrent")
+    display_name = get_client_display_name(c_type)
+    
+    return await render_template("index.html", CLIENT_DISPLAY_NAME=display_name, **app.config)
 
 FETCH_SEMAPHORE = asyncio.Semaphore(200)
 
@@ -769,7 +773,16 @@ async def update_settings():
     await load_new_app_config()
     if app.config.get("ENABLE_DYNAMIC_IP_UPDATE"):
         scheduler.add_job(id='manual_ip_update_job', func=force_update_ip, trigger='date', run_date=datetime.now() + timedelta(seconds=2))
-    return jsonify({"status": "success", "message": "Settings updated!"})
+    
+    # Get the new display name from the source of truth
+    new_type = config_to_update.get("TORRENT_CLIENT_TYPE")
+    display_name = get_client_display_name(new_type)
+
+    return jsonify({
+        "status": "success", 
+        "message": "Settings updated!",
+        "client_display_name": display_name 
+    })
 
 
 # --- ORGANIZE LOGIC ---
