@@ -277,10 +277,28 @@ async def monitor_downloads_loop():
                         status_summary.append(f"{h[:6]}..: {p:.1f}% (ETA: {eta_str})")
                     
                     app.logger.debug(f"[MONITOR] Polled {len(torrents_info)} item(s): {', '.join(status_summary)}")
+                    
+                    # Broadcast torrent progress updates via SSE
+                    await broadcast_payload({
+                        "event": "torrent-progress",
+                        "torrents": torrents_info
+                    })
+                    
+                    # Broadcast client health status
+                    await broadcast_payload({
+                        "event": "client-status",
+                        "status": "connected",
+                        "display_name": get_client_display_name(app.config.get('TORRENT_CLIENT_TYPE', 'qbittorrent'))
+                    })
 
             except Exception as e:
                 app.logger.warning(f"[MONITOR] Fetch failed (session expired?): {e}")
-                client_session_active = False 
+                client_session_active = False
+                # Broadcast client disconnected status
+                await broadcast_payload({
+                    "event": "client-status",
+                    "status": "disconnected"
+                })
                 await asyncio.sleep(1)
                 continue
 
@@ -356,6 +374,9 @@ async def monitor_downloads_loop():
                     app.logger.error(f"[MONITOR] Exception during auto-organize for {h}: {e}", exc_info=True)
                 if h in monitoring_state:
                     del monitoring_state[h]
+                
+                # Push updated MAM stats when a torrent finishes
+                await push_mam_stats()
 
             for h in active_hashes:
                 if h not in torrents_info and h not in finished_hashes:
@@ -378,8 +399,8 @@ async def monitor_downloads_loop():
                 lowest_eta = min(valid_etas_for_sleep)
                 # ETA / 2 logic
                 sleep_time = max(2, int(lowest_eta / 2))
-                # Configurable cap (hardcoded 30s as requested)
-                sleep_time = min(sleep_time, 30)
+                # Cap at 3 seconds for responsive SSE updates to frontend
+                sleep_time = min(sleep_time, 3)
                 sleep_reason = f"Stable Backoff (min ETA: {lowest_eta}s)"
             else:
                 # Fallback if we have active downloads but none fell into valid buckets
@@ -469,6 +490,30 @@ async def login_mam():
         except Exception:
             pass
     return False
+
+async def push_mam_stats():
+    """Fetch MAM user stats and broadcast them via SSE."""
+    if not await login_mam():
+        app.logger.debug("[MAM-STATS] Not logged in, skipping stats push")
+        return
+    try:
+        api_url = f"{app.config.get('MAM_API_URL')}/jsonLoad.php"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(api_url, cookies=mam_session_cookies, timeout=10)
+            update_cookies(response)
+            response.raise_for_status()
+            user_data = response.json()
+            if seedbonus := user_data.get("seedbonus"):
+                user_data["seedbonus_formatted"] = f"{seedbonus:,}"
+            
+            # Broadcast MAM stats via SSE
+            await broadcast_payload({
+                "event": "mam-stats",
+                "data": user_data
+            })
+            app.logger.debug("[MAM-STATS] Successfully pushed MAM stats via SSE")
+    except Exception as e:
+        app.logger.warning(f"[MAM-STATS] Failed to fetch/push MAM stats: {e}")
 
 # --- QUART ROUTES ---
 @app.route('/mam/status', methods=['GET'])
@@ -646,19 +691,24 @@ def sanitize_filename(name: str) -> str:
     sanitized = re.sub(r'[<>:"/\\|?*]', '', name)
     return sanitized.strip('. ') if sanitized else "Untitled"
 
-async def broadcast_toast(message: str, category: str = "primary"):
-    """Broadcast a toast notification to all connected SSE clients."""
-    payload = json.dumps({"message": message, "type": category})
+async def broadcast_payload(payload: dict):
+    """Broadcast a generic payload to all connected SSE clients."""
+    payload_json = json.dumps(payload)
     disconnected = set()
+    # Fix for "Set changed size during iteration" error
     for queue in list(connected_websockets):
         try:
-            await queue.put(payload)
+            await queue.put(payload_json)
         except Exception as e:
             app.logger.debug(f"Failed to broadcast to queue: {e}")
             disconnected.add(queue)
     # Clean up disconnected queues
     for queue in disconnected:
         connected_websockets.discard(queue)
+
+async def broadcast_toast(message: str, category: str = "primary"):
+    """Broadcast a toast notification to all connected SSE clients."""
+    await broadcast_payload({"event": "toast", "message": message, "type": category})
     
 @app.route('/calculate_hash', methods=['POST'])
 async def get_torrent_hash():
@@ -887,8 +937,19 @@ async def _perform_organization(hash_val: str) -> tuple[bool, str]:
     
     metadata[hash_val]['organized'] = True
     save_metadata(metadata)
-    await broadcast_toast(f"Auto-organized '{torrent_meta.get('title', 'Unknown')}': {files_linked} linked, {files_exist} existed", "success")
-    return True, f"Success: {files_linked} linked, {files_exist} existed."
+    
+    # User-friendly success message
+    title = torrent_meta.get('title', 'Unknown')
+    author = torrent_meta.get('author', 'Unknown Author')
+    await broadcast_toast(f"Successfully auto-organized '{title}' by {author}", "success")
+    
+    # Return detailed message with both user-friendly text and technical details
+    details = (
+        f"Successfully auto-organized '{title}' by {author}. "
+        f"Files: {files_linked} linked, {files_exist} already existed. "
+        f"Source: {content_path}, Destination: {dest_path}"
+    )
+    return True, details
 
 @app.route('/events')
 async def events():

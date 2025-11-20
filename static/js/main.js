@@ -23,12 +23,12 @@ const redXIcon = `<img src="/static/icons/x_circle.svg" alt="not connected" styl
 const pollingIntervals = {};
 const torrentHashMap = {};
 
-// New batch polling system
-const activeHashes = new Set();
+// Hash tracking for SSE updates
 const hashToElementMap = new Map(); // Maps hash -> resultItem element
-const hashRetryCount = new Map(); // Maps hash -> number of retries for "not found" status
-const MAX_RETRIES = 10; // Maximum retries before giving up (20 seconds with 2s interval)
-let batchPollingInterval = null;
+
+// State tracking to prevent unnecessary DOM updates
+let lastClientStatus = null;
+let lastMamStats = null;
 
 /**
  * Initializes Server-Sent Events (SSE) connection for real-time toast notifications.
@@ -39,7 +39,70 @@ function initializeEventStream() {
     eventSource.onmessage = function(event) {
         try {
             const data = JSON.parse(event.data);
-            showToast(data.message, data.type);
+            
+            switch(data.event) {
+                case 'toast':
+                    showToast(data.message, data.type);
+                    break;
+                    
+                case 'torrent-progress':
+                    // Update UI for each torrent
+                    const torrents = data.torrents || {};
+                    for (const [hash, torrentData] of Object.entries(torrents)) {
+                        // Find the DOM element for this hash
+                        const resultItem = hashToElementMap.get(hash);
+                        if (resultItem) {
+                            updateTorrentUI(hash, torrentData, resultItem);
+                        }
+                    }
+                    break;
+                    
+                case 'client-status':
+                    // Only update DOM if status actually changed
+                    if (lastClientStatus === data.status) {
+                        break; // No change, skip DOM updates
+                    }
+                    lastClientStatus = data.status;
+                    
+                    const statusSpan = document.getElementById("client-status");
+                    const statusIconSpan = document.getElementById("client-status-icon");
+                    const clientTypeDisplay = document.getElementById('client-type-display');
+                    
+                    const isConnected = data.status === "connected";
+                    if (statusSpan) {
+                        statusSpan.textContent = isConnected ? "CONNECTED" : "NOT CONNECTED";
+                        statusSpan.className = isConnected ? "text-success" : "text-danger";
+                    }
+                    if (statusIconSpan) {
+                        statusIconSpan.innerHTML = isConnected ? greenCheckIcon : redXIcon;
+                    }
+                    if (isConnected && data.display_name && clientTypeDisplay) {
+                        clientTypeDisplay.textContent = data.display_name;
+                    }
+                    break;
+                    
+                case 'mam-stats':
+                    const userData = data.data || {};
+                    const fields = {
+                        'mam-username': 'username',
+                        'mam-class': 'classname',
+                        'mam-uploaded': 'uploaded',
+                        'mam-downloaded': 'downloaded',
+                        'mam-ratio': 'ratio',
+                        'mam-bonus': 'seedbonus_formatted'
+                    };
+                    
+                    for (const [elementId, dataKey] of Object.entries(fields)) {
+                        const element = document.getElementById(elementId);
+                        if (element) {
+                            element.textContent = userData[dataKey] || userData['seedbonus'] || 'N/A';
+                        }
+                    }
+                    break;
+                    
+                default:
+                    console.warn('[SSE] Unknown event type:', data.event);
+            }
         } catch (error) {
             console.error('[SSE] Failed to parse event data:', error);
         }
@@ -86,144 +149,12 @@ async function getTorrentHash(torrentId, torrentUrl) {
 }
 
 /**
- * Performs a single batch poll of all active torrents.
- */
-async function performBatchPoll() {
-    if (activeHashes.size === 0) {
-        console.log('[BATCH-POLL] No active hashes, stopping batch polling');
-        stopBatchPolling();
-        return;
-    }
-    
-    const hashArray = Array.from(activeHashes);
-    console.log(`[BATCH-POLL] Polling ${hashArray.length} torrent(s)`);
-    
-    try {
-        const response = await fetch('/client/info/batch', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ hashes: hashArray })
-        });
-        
-        if (!response.ok) {
-            console.error(`[BATCH-POLL] HTTP error! status: ${response.status}`);
-            return;
-        }
-        
-        const data = await response.json();
-        
-        if (data.error) {
-            console.error('[BATCH-POLL] Error from server:', data.error);
-            return;
-        }
-        
-        const torrents = data.torrents || {};
-        
-        // Update UI for each active hash
-        for (const hash of hashArray) {
-            const resultItem = hashToElementMap.get(hash);
-            if (!resultItem) {
-                console.warn(`[BATCH-POLL] No result item found for hash ${hash}`);
-                continue;
-            }
-            
-            const torrentData = torrents[hash];
-            if (!torrentData) {
-                // Torrent not found in client - implement retry logic
-                const retries = hashRetryCount.get(hash) || 0;
-                if (retries < MAX_RETRIES) {
-                    // Increment retry count and show waiting message
-                    hashRetryCount.set(hash, retries + 1);
-                    const statusContainer = resultItem.querySelector('.torrent-status-container');
-                    if (statusContainer) {
-                        const waitTime = Math.ceil((MAX_RETRIES - retries) * 2); // Rough estimate of remaining wait time
-                        statusContainer.innerHTML = `<span class="badge bg-warning text-wrap">Waiting for client to process torrent... (${waitTime}s)</span>`;
-                    }
-                    console.log(`[BATCH-POLL] Torrent ${hash} not found, retry ${retries + 1}/${MAX_RETRIES}`);
-                    continue; // Keep polling
-                } else {
-                    // Max retries reached, give up
-                    const statusContainer = resultItem.querySelector('.torrent-status-container');
-                    if (statusContainer) {
-                        statusContainer.innerHTML = `<span class="badge bg-danger text-wrap">Torrent not found in client</span>`;
-                    }
-                    console.log(`[BATCH-POLL] Giving up on torrent ${hash} after ${MAX_RETRIES} retries`);
-                    removeHashFromPolling(hash);
-                    continue;
-                }
-            }
-            
-            // Reset retry count since torrent was found
-            hashRetryCount.delete(hash);
-            updateTorrentUI(hash, torrentData, resultItem);
-        }
-        
-    } catch (error) {
-        console.error('[BATCH-POLL] Polling error:', error);
-    }
-}
-
-/**
- * Starts the global batch polling interval if not already running.
- * Makes an immediate poll before starting the interval.
- */
-function startBatchPolling() {
-    if (batchPollingInterval !== null) {
-        console.log('[BATCH-POLL] Batch polling already running');
-        return;
-    }
-    
-    console.log('[BATCH-POLL] Starting batch polling interval');
-    
-    // Make immediate poll before starting interval
-    performBatchPoll();
-    
-    // Then start the interval
-    batchPollingInterval = setInterval(performBatchPoll, 2000);
-}
-
-/**
- * Stops the global batch polling interval.
- */
-function stopBatchPolling() {
-    if (batchPollingInterval !== null) {
-        console.log('[BATCH-POLL] Stopping batch polling interval');
-        clearInterval(batchPollingInterval);
-        batchPollingInterval = null;
-    }
-}
-
-/**
- * Adds a hash to the active polling list.
- */
-function addHashToPolling(hash, resultItem) {
-    console.log(`[BATCH-POLL] Adding hash ${hash} to active polling`);
-    activeHashes.add(hash);
-    hashToElementMap.set(hash, resultItem);
-    hashRetryCount.delete(hash); // Reset retry count when starting fresh
-    startBatchPolling();
-}
-
-/**
- * Removes a hash from the active polling list.
- */
-function removeHashFromPolling(hash) {
-    console.log(`[BATCH-POLL] Removing hash ${hash} from active polling`);
-    activeHashes.delete(hash);
-    hashToElementMap.delete(hash);
-    hashRetryCount.delete(hash); // Clean up retry count
-    if (activeHashes.size === 0) {
-        stopBatchPolling();
-    }
-}
-
-/**
  * Updates the UI for a specific torrent based on its data.
  */
 function updateTorrentUI(hash, data, resultItem) {
     const statusContainer = resultItem.querySelector('.torrent-status-container');
     if (!statusContainer) {
-        console.error(`[BATCH-POLL] Could not find status container for hash ${hash}`);
+        console.error(`[UI-UPDATE] Could not find status container for hash ${hash}`);
         return;
     }
     
@@ -257,17 +188,10 @@ function updateTorrentUI(hash, data, resultItem) {
         </div>
     `;
     statusContainer.innerHTML = statusHtml;
-    
-    // Stop polling on terminal states
-    const terminalStates = ['error', 'missingFiles', 'uploading', 'pausedUP', 'stalledUP', 'forcedUP', 'pausedDL'];
-    if (terminalStates.includes(state)) {
-        console.log(`[BATCH-POLL] Stopping poll for hash ${hash} because its state is terminal: ${state}`);
-        removeHashFromPolling(hash);
-    }
 }
 
 /**
- * Initiates polling for a torrent by adding it to the batch polling system.
+ * Registers a torrent hash for SSE updates by mapping it to its UI element.
  * @param {string} hash - The torrent hash
  * @param {HTMLElement} resultItem - The DOM element for this result item
  */
@@ -278,10 +202,13 @@ function pollTorrentStatus(hash, resultItem) {
         return;
     }
 
-    console.log(`[POLL] Starting to poll status for hash: ${hash}`);
+    console.log(`[SSE-REGISTER] Registering hash ${hash} for SSE updates`);
     
-    // Add to batch polling system
-    addHashToPolling(hash, resultItem);
+    // Map hash to element so SSE updates can find it
+    hashToElementMap.set(hash, resultItem);
+    
+    // Show initial waiting state
+    statusContainer.innerHTML = `<span class="badge bg-info text-wrap">Waiting for updates...</span>`;
 }
 
 /**
@@ -562,12 +489,9 @@ document.addEventListener("DOMContentLoaded", function () {
             resultsTitle.textContent = 'Results';
         }
 
-        // Clear all existing polling intervals before a new search
-        console.log("[SEARCH] New search submitted. Clearing all active polling.");
-        stopBatchPolling();
-        activeHashes.clear();
+        // Clear hash-to-element mappings before a new search
+        console.log("[SEARCH] New search submitted. Clearing hash mappings.");
         hashToElementMap.clear();
-        hashRetryCount.clear();
 
         const queryParams = new URLSearchParams(new FormData(searchForm)).toString();
 
