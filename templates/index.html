@@ -397,7 +397,9 @@
         </div>
         <div class="mb-3">
           <label for="TORRENT_CLIENT_CATEGORY" class="form-label">Default category</label>
-          <input type="text" class="form-control" id="TORRENT_CLIENT_CATEGORY" name="TORRENT_CLIENT_CATEGORY" value="{{ TORRENT_CLIENT_CATEGORY }}" />
+          <select class="form-select" id="TORRENT_CLIENT_CATEGORY" name="TORRENT_CLIENT_CATEGORY" data-current-value="{{ TORRENT_CLIENT_CATEGORY }}">
+             <option value="{{ TORRENT_CLIENT_CATEGORY }}" selected>{{ TORRENT_CLIENT_CATEGORY }}</option>
+          </select>
         </div>
 
         <h5 class="text-center border-bottom pb-2">MyAnonaMouse</h5>

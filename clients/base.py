@@ -6,6 +6,12 @@ class TorrentClient(ABC):
         self.config = config
         self.session_cookies = {}
 
+    @property
+    @abstractmethod
+    def display_name(self) -> str:
+        """Returns the user-friendly display name of the client."""
+        pass
+
     @abstractmethod
     async def login(self) -> bool:
         """Authenticates with the torrent client."""

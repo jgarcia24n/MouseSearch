@@ -11,6 +11,10 @@ class QBittorrentClient(TorrentClient):
         self.password = config.get("TORRENT_CLIENT_PASSWORD")
         self.headers = config.get("BASE_HEADERS", {})
 
+    @property
+    def display_name(self) -> str:
+        return "qBittorrent"
+
     async def login(self) -> bool:
         """Authenticates with qBittorrent and stores session cookies."""
         if not all([self.base_url, self.username, self.password]):
@@ -46,8 +50,9 @@ class QBittorrentClient(TorrentClient):
                 response.raise_for_status()
                 return {
                     "status": "success",
-                    "message": "qBittorrent is connected.",
-                    "version": response.text
+                    "message": f"{self.display_name} is connected.",
+                    "version": response.text,
+                    "display_name": self.display_name
                 }
         except RequestError as e:
             return {"status": "error", "message": f"Failed to connect: {e}"}

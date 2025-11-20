@@ -267,6 +267,7 @@ function pollTorrentStatus(hash, resultItem) {
 function checkClientStatus() {
     const statusSpan = document.getElementById("client-status");
     const statusIconSpan = document.getElementById("client-status-icon");
+    const clientTypeDisplay = document.getElementById('client-type-display');
 
     fetch('/client/status', { cache: "no-store" })
         .then(response => response.json())
@@ -278,6 +279,10 @@ function checkClientStatus() {
             }
             if (statusIconSpan) {
                 statusIconSpan.innerHTML = isSuccess ? greenCheckIcon : redXIcon;
+            }
+            // Update display name from the client module
+            if (isSuccess && data.display_name && clientTypeDisplay) {
+                clientTypeDisplay.textContent = data.display_name;
             }
             if (isSuccess) {
                 refreshCategories();
@@ -302,9 +307,10 @@ function refreshCategories() {
     fetch('/client/categories', { cache: "no-store" })
         .then(response => response.json())
         .then(data => {
-            const dropdowns = document.querySelectorAll('.category-dropdown');
+            // 1. Update Result Dropdowns
+            const resultDropdowns = document.querySelectorAll('.category-dropdown');
             const defaultCategory = document.getElementById('TORRENT_CLIENT_CATEGORY')?.value || '';
-            dropdowns.forEach(dropdown => {
+            resultDropdowns.forEach(dropdown => {
                 const currentVal = dropdown.value;
                 dropdown.innerHTML = '<option value="">Category</option>';
                 if (data && typeof data === 'object') {
@@ -316,6 +322,30 @@ function refreshCategories() {
                 }
                 dropdown.value = currentVal || defaultCategory;
             });
+
+            // 2. Update Settings Dropdown
+            const settingsDropdown = document.getElementById('TORRENT_CLIENT_CATEGORY');
+            if (settingsDropdown) {
+                const currentValue = settingsDropdown.dataset.currentValue || '';
+                settingsDropdown.innerHTML = '<option value="">None</option>'; // Default empty option
+                if (data && typeof data === 'object') {
+                    for (const key in data) {
+                        const category = data[key];
+                        const option = new Option(category.name, category.name);
+                        if (category.name === currentValue) {
+                            option.selected = true;
+                        }
+                        settingsDropdown.add(option);
+                    }
+                }
+                // If the current value wasn't found in the list but exists, append it as a manual entry
+                // (Optional, but good if the client doesn't report the category yet or it's new)
+                if (currentValue && ![...settingsDropdown.options].some(o => o.value === currentValue)) {
+                     const option = new Option(currentValue, currentValue);
+                     option.selected = true;
+                     settingsDropdown.add(option);
+                }
+            }
         })
         .catch(error => console.error("Error refreshing categories:", error));
 }
