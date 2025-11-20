@@ -513,10 +513,12 @@ document.addEventListener("DOMContentLoaded", function () {
                     document.getElementById('clientLink').href = document.getElementById('TORRENT_CLIENT_URL').value;
                     document.getElementById('clientLink').textContent = document.getElementById('TORRENT_CLIENT_URL').value;
                     
-                    // Update client type display
-                    const clientType = document.getElementById('TORRENT_CLIENT_TYPE').value;
-                    const clientTypeDisplay = clientType.charAt(0).toUpperCase() + clientType.slice(1);
-                    document.getElementById('client-type-display').textContent = clientTypeDisplay;
+                    // REMOVED: The manual capitalization logic that was here
+                    
+                    // Update the display name using the value returned from the server
+                    if (data.client_display_name) {
+                        document.getElementById('client-type-display').textContent = data.client_display_name;
+                    }
                     
                     checkClientStatus();
                     loadMamUserData();

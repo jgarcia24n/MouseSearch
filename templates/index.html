@@ -309,10 +309,10 @@
 
         <div class="accordion my-3" id="clientAccordion">
           <div class="accordion-item">
-            <h2 class="accordion-header" id="clientAccordionHeading">
+<h2 class="accordion-header" id="clientAccordionHeading">
               <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
                 data-bs-target="#clientAccordionCollapse" aria-expanded="true" aria-controls="clientAccordionCollapse">
-                <span id="client-type-display">{{ TORRENT_CLIENT_TYPE|title if TORRENT_CLIENT_TYPE else 'Torrent Client' }}</span><span id="client-status-icon" class="ms-2"></span>
+                <span id="client-type-display">{{ CLIENT_DISPLAY_NAME }}</span><span id="client-status-icon" class="ms-2"></span>
               </button>
             </h2>
             <div id="clientAccordionCollapse" class="accordion-collapse collapse" aria-labelledby="clientAccordionHeading"
