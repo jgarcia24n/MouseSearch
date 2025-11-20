@@ -12,7 +12,9 @@ services:
       
     # env_file: .env # optional: load environment variables from a file
 
-    # Optional: Set the container's timezone to match your host (useful for logs and scheduled tasks)
     environment:
       - TZ=America/Chicago
+      # Change these to match your host user (run 'id' in terminal to check)
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
 
