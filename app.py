@@ -1343,6 +1343,29 @@ async def mam_search():
                 if item_id in mid_to_hash:
                     item['my_snatched'] = 1
             
+            # Add snatched results to database.json with 'unknown' status
+            metadata = load_metadata()
+            for item in ranked:
+                if item.get('my_snatched') == 1:
+                    item_id = str(item.get('id', ''))
+                    torrent_hash = mid_to_hash.get(item_id)
+                    
+                    # Only add if hash is available and not already in database
+                    if torrent_hash and torrent_hash not in metadata:
+                        metadata[torrent_hash] = {
+                            "mid": item_id,
+                            "author": item.get('author_info', ''),
+                            "title": item.get('title', ''),
+                            "added_on": datetime.now().isoformat(),
+                            "status": "unknown",
+                            "retry_count": 0
+                        }
+                        app.logger.info(f"Added snatched torrent to database: {item.get('title')} (MID: {item_id}, hash: {torrent_hash})")
+            
+            # Save updated metadata if any snatched torrents were added
+            if any(item.get('my_snatched') == 1 for item in ranked):
+                save_metadata(metadata)
+            
             return await render_template("partials/results.html", results=ranked, CLIENT_STATUS="CONNECTED" if client_connected else "NOT CONNECTED", categories=categories, TORRENT_CLIENT_CATEGORY=app.config.get("TORRENT_CLIENT_CATEGORY", ""))
     except Exception as e:
         return await render_template("partials/results.html", error_message=f"Error: {e}")
@@ -1436,7 +1459,7 @@ async def _perform_organization(hash_val: str) -> tuple[bool, str]:
     if hash_val not in metadata: return False, f"No metadata for hash {hash_val}."
     status = metadata[hash_val].get('status', 'pending')
     if status == 'organized': return True, f"Already organized: {hash_val}."
-    if status == 'untracked': return True, f"Torrent {hash_val} is marked as untracked - skipping organization."
+    if status == 'unknown': return True, f"Torrent {hash_val} is marked as unknown - skipping organization."
     if metadata[hash_val].get('retry_count', 0) >= 3: return True, "Max retries exceeded."
     
     if not torrent_client: return False, "Client not initialized."
