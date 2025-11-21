@@ -420,6 +420,43 @@ function loadMamUserData() {
             document.getElementById('mam-downloaded').textContent = data.downloaded || 'N/A';
             document.getElementById('mam-ratio').textContent = data.ratio || 'N/A';
             document.getElementById('mam-bonus').textContent = data.seedbonus_formatted || data.seedbonus || 'N/A';
+            
+            // Calculate and display VIP weeks remaining
+            const vipWeeksContainer = document.getElementById('vip-weeks-container');
+            const vipWeeksSpan = document.getElementById('vip-weeks-remaining');
+            if (data.vip_until && vipWeeksContainer && vipWeeksSpan) {
+                try {
+                    const vipUntil = new Date(data.vip_until);
+                    const now = new Date();
+                    const diffMs = vipUntil - now;
+                    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+                    const diffWeeks = Math.floor(diffDays / 7);
+                    const remainingDays = diffDays % 7;
+                    
+                    if (diffMs > 0) {
+                        let vipText = '';
+                        if (diffWeeks > 0) {
+                            vipText = `${diffWeeks} week${diffWeeks !== 1 ? 's' : ''}`;
+                            if (remainingDays > 0) {
+                                vipText += `, ${remainingDays} day${remainingDays !== 1 ? 's' : ''}`;
+                            }
+                        } else if (diffDays > 0) {
+                            vipText = `${diffDays} day${diffDays !== 1 ? 's' : ''}`;
+                        } else {
+                            vipText = 'less than 1 day';
+                        }
+                        vipWeeksSpan.textContent = vipText;
+                        vipWeeksContainer.style.display = 'block';
+                    } else {
+                        vipWeeksContainer.style.display = 'none';
+                    }
+                } catch (e) {
+                    console.error('Error parsing VIP date:', e);
+                    vipWeeksContainer.style.display = 'none';
+                }
+            } else if (vipWeeksContainer) {
+                vipWeeksContainer.style.display = 'none';
+            }
         })
         .catch(error => {
             console.error("Error fetching MAM user data:", error);
@@ -433,6 +470,8 @@ function loadMamUserData() {
             document.getElementById('mam-downloaded').textContent = 'N/A';
             document.getElementById('mam-ratio').textContent = 'N/A';
             document.getElementById('mam-bonus').textContent = 'N/A';
+            const vipWeeksContainer = document.getElementById('vip-weeks-container');
+            if (vipWeeksContainer) vipWeeksContainer.style.display = 'none';
         });
 }
 
