@@ -41,8 +41,11 @@ connected_websockets = set()
 
 @app.before_serving
 async def startup():
-    app.logger.info("Cache cleanup task started")
-    app.add_background_task(cleanup_cache_task)
+    # Only start cache cleanup if thumbnail caching is enabled
+    if initial_config.get("ENABLE_THUMBNAIL_CACHE", True):
+        app.logger.info("Cache cleanup task started")
+        app.add_background_task(cleanup_cache_task)
+    
     await load_new_app_config()
     if not scheduler.running:
         scheduler.start()
@@ -139,7 +142,8 @@ FALLBACK_CONFIG = {
     "AUTO_BUY_UPLOAD_BUFFER_THRESHOLD": 10,
     "AUTO_BUY_UPLOAD_BUFFER_AMOUNT": 10,
     "AUTO_BUY_UPLOAD_CHECK_INTERVAL_HOURS": 6,
-    "BLOCK_DOWNLOAD_ON_LOW_BUFFER": True
+    "BLOCK_DOWNLOAD_ON_LOW_BUFFER": True,
+    "ENABLE_THUMBNAIL_CACHE": True
 }
 
 # Set up data directory and paths
@@ -154,7 +158,6 @@ IP_STATE_FILE = DATA_PATH / "ip_state.json"
 
 # --- Setup:thumbnail cache ---
 THUMB_CACHE_DIR = DATA_PATH / "cache/thumbnails"
-os.makedirs(THUMB_CACHE_DIR, exist_ok=True)
 
 # These will be set from config
 ORGANIZED_PATH = None
@@ -1423,17 +1426,23 @@ async def proxy_thumbnail():
     url = request.args.get("url")
     if not url or UPSTREAM_CLIENT is None: return "Error", 400
     
+    cache_enabled = app.config.get("ENABLE_THUMBNAIL_CACHE", True)
+    
     # --- Cache Read ---
     cache_key = hashlib.md5(url.encode()).hexdigest()
     cache_path = os.path.join(THUMB_CACHE_DIR, cache_key)
     
-    if os.path.exists(cache_path):
-        # Check if younger than 30 days (2592000 seconds)
-        if time.time() - os.path.getmtime(cache_path) < 2592000:
-            response = await send_file(cache_path)
-            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-            response.headers["X-Cache-Status"] = "HIT"
-            return response
+    if cache_enabled:
+        # Ensure cache directory exists only when caching is enabled
+        os.makedirs(THUMB_CACHE_DIR, exist_ok=True)
+        
+        if os.path.exists(cache_path):
+            # Check if younger than 30 days (2592000 seconds)
+            if time.time() - os.path.getmtime(cache_path) < 2592000:
+                response = await send_file(cache_path)
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+                response.headers["X-Cache-Status"] = "HIT"
+                return response
             
     # --- Upstream Fetch ---
     fwd_headers = {h: request.headers.get(h) for h in ("If-None-Match", "If-Modified-Since", "Range") if request.headers.get(h)}
@@ -1449,7 +1458,7 @@ async def proxy_thumbnail():
             
         async def body():
             temp_path = cache_path + ".tmp"
-            should_cache = r.status_code == 200
+            should_cache = cache_enabled and r.status_code == 200
             try:
                 file_handle = open(temp_path, 'wb') if should_cache else None
                 
@@ -1469,7 +1478,7 @@ async def proxy_thumbnail():
                 await r.aclose()
 
         response = Response(body(), status=r.status_code, headers=passthrough)
-        response.headers["X-Cache-Status"] = "MISS"
+        response.headers["X-Cache-Status"] = "MISS" if cache_enabled else "DISABLED"
         return response
 
 @app.route("/update_settings", methods=["POST"])
