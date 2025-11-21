@@ -154,7 +154,7 @@ DATA_PATH.mkdir(parents=True, exist_ok=True)
 UPLOAD_OPTIONS_FILE = Path("./static/upload_options.json")
 
 CONFIG_FILE = DATA_PATH / "config.json"
-METADATA_FILE = DATA_PATH / "database.json"
+DATABASE_FILE = DATA_PATH / "database.json"
 IP_STATE_FILE = DATA_PATH / "ip_state.json"
 
 # --- Setup:thumbnail cache ---
@@ -1220,13 +1220,13 @@ async def client_torrent_info_batch():
             return jsonify({'error': str(e2)}), 503
     
 def load_metadata():
-    if not os.path.exists(METADATA_FILE): return {}
+    if not os.path.exists(DATABASE_FILE): return {}
     try:
-        with open(METADATA_FILE, "r") as f: return json.load(f)
+        with open(DATABASE_FILE, "r") as f: return json.load(f)
     except: return {}
 
 def save_metadata(data):
-    with open(METADATA_FILE, "w") as f: json.dump(data, f, indent=4)
+    with open(DATABASE_FILE, "w") as f: json.dump(data, f, indent=4)
 
 def sanitize_filename(name: str) -> str:
     sanitized = re.sub(r'[<>:"/\\|?*]', '', name)

@@ -286,3 +286,23 @@ The easiest way to ensure this is to have a single parent directory (e.g., `/mnt
 **For Bare Metal installations:** Simply use absolute paths on your host system, again ensuring they are both on the same fileysystem/disk (e.g., `/mnt/storage/downloads/torrents/` and `/mnt/storage/downloads/organized/`).
 
 This setup guarantees that both paths point to the same underlying device, allowing hard links to be created.
+
+---
+
+## Feature Roadmap
+
+Planned features and enhancements for future releases:
+
+### Enhanced Organization
+- **LLM-Powered Auto-Organization**: Leverage large language models to intelligently organize media with improved accuracy for:
+  - Better author/title extraction and normalization
+  - Series detection and ordering
+  - Handling edge cases and non-standard naming conventions
+  - Smart metadata enrichment
+
+### Torrent Client Support
+- **Transmission** support
+- **Deluge** support  
+- **rTorrent** support
+
+**Have a feature request?** Open an issue on [GitHub](https://github.com/sevenlayercookie/MouseSearch/issues) to suggest new features
