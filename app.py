@@ -59,7 +59,7 @@ async def startup():
     app.logger.info("Shared httpx AsyncClient initialized")
     
     # --- Initialize Active Monitoring on Startup ---
-    metadata = load_metadata()
+    metadata = load_database()
     pending = [h for h, m in metadata.items() if m.get('status') == 'pending']
     if pending:
         app.logger.info(f"Startup: Found {len(pending)} pending torrents. Starting active monitoring.")
@@ -287,7 +287,7 @@ async def monitor_downloads_loop():
                                 app.logger.info(f"Resolved MID {mid} to hash {torrent_hash}")
                                 
                                 # Save metadata with hash
-                                metadata = load_metadata()
+                                metadata = load_database()
                                 metadata[torrent_hash] = pending_data["metadata"]
                                 save_database(metadata)
                                 
@@ -1086,7 +1086,7 @@ async def client_add_torrent():
         if not hash_val:
             auto_organize_warning = "Unable to calculate hash - auto-organization will not work."
         else:
-            metadata = load_metadata()
+            metadata = load_database()
             metadata[hash_val] = {
                 "mid": id, "author": author, "title": title,
                 "added_on": datetime.now().isoformat(),
@@ -1219,7 +1219,7 @@ async def client_torrent_info_batch():
         except Exception as e2:
             return jsonify({'error': str(e2)}), 503
     
-def load_metadata():
+def load_database():
     if not os.path.exists(DATABASE_FILE): return {}
     try:
         with open(DATABASE_FILE, "r") as f: return json.load(f)
@@ -1355,7 +1355,7 @@ async def mam_search():
                     item['my_snatched'] = 1
             
             # Add snatched results to database.json with 'unknown' status
-            metadata = load_metadata()
+            metadata = load_database()
             for item in ranked:
                 if item.get('my_snatched') == 1:
                     item_id = str(item.get('id', ''))
@@ -1571,7 +1571,7 @@ async def update_settings():
 
 async def _perform_organization(hash_val: str) -> tuple[bool, str]:
     """Performs the file organization for a given torrent hash."""
-    metadata = load_metadata()
+    metadata = load_database()
     if hash_val not in metadata: return False, f"No metadata for hash {hash_val}."
     status = metadata[hash_val].get('status', 'pending')
     if status == 'organized': return True, f"Already organized: {hash_val}."
@@ -1702,7 +1702,7 @@ async def organize_torrent_webhook(hash_val=None):
                 app.logger.error(f"[ORGANIZE] Exception during organization of {hash_val}: {e}", exc_info=True)
                 return jsonify({'status': 'error', 'message': f'Internal error: {str(e)}'}), 500
         else:
-            metadata = load_metadata()
+            metadata = load_database()
             pending = [h for h, m in metadata.items() if m.get('status') == 'pending']
             results = {'succeeded': 0, 'failed': 0, 'errors': []}
             for h in pending:
@@ -1735,7 +1735,7 @@ async def check_for_unorganized_torrents():
     """Safety net job."""
     async with app.app_context():
         app.logger.info("Running safety net organization job.")
-        metadata = load_metadata()
+        metadata = load_database()
         pending = [h for h, m in metadata.items() if m.get('status') == 'pending']
         for h in pending:
             try:
