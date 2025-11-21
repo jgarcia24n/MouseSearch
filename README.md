@@ -245,7 +245,12 @@ These can be enabled independently of each other:
 
 ### Critical Setup Requirement
 
-For hard links to work, your source (`TORRENT_DOWNLOAD_PATH`) and destination (`ORGANIZED_PATH`) directories **must exist on the same filesystem**.
+For hard links to work, your source (`TORRENT_DOWNLOAD_PATH`) and destination (`ORGANIZED_PATH`) directories **must**:
+1. exist on the same filesystem
+
+    **AND** 
+
+2. within the same volume mount (if using Docker)
 
 The easiest way to ensure this is to have a single parent directory (e.g., `/mnt/storage/downloads`) on your host machine that contains *both* your torrents and your organized media. You then pass this single parent directory as a volume in your `compose.yaml`, as shown in the example.
 
