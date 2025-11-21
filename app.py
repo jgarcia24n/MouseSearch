@@ -1,10 +1,11 @@
 # app.py - Quart (async) version
-from quart import Quart, request, render_template, Response, jsonify, session
+from quart import Quart, request, render_template, Response, jsonify, session, send_file
 import httpx
 import json
 import argparse
 import os
 import time
+import hashlib
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from httpx import RequestError, Limits, Timeout, AsyncHTTPTransport
@@ -35,11 +36,17 @@ torrent_status_cache = {}
 CACHE_TTL = 2.0
 pending_mid_resolutions = {}  # Maps MID -> {"added_at": timestamp, "metadata": {...}}
 
+# --- Setup:thumbnail cache ---
+THUMB_CACHE_DIR = "data/cache/thumbnails"
+os.makedirs(THUMB_CACHE_DIR, exist_ok=True)
+
 # --- SSE Globals ---
 connected_websockets = set() 
 
 @app.before_serving
 async def startup():
+    app.logger.info("Cache cleanup task started")
+    app.add_background_task(cleanup_cache_task)
     await load_new_app_config()
     if not scheduler.running:
         scheduler.start()
@@ -1383,25 +1390,83 @@ async def index():
         **app.config
     )
     
+
+async def cleanup_cache_task():
+    """Deletes files in the cache directory older than 30 days."""
+    max_age = 30 * 24 * 60 * 60  # 30 days in seconds
+    
+    while True:
+        try:
+            now = time.time()
+            cutoff = now - max_age
+            
+            # Iterate over files in the directory
+            if os.path.exists(THUMB_CACHE_DIR):
+                for filename in os.listdir(THUMB_CACHE_DIR):
+                    filepath = os.path.join(THUMB_CACHE_DIR, filename)
+                    
+                    # Check if it's a file and older than the cutoff
+                    if os.path.isfile(filepath):
+                        if os.path.getmtime(filepath) < cutoff:
+                            os.remove(filepath)
+                            
+        except Exception as e:
+            print(f"Error during cache cleanup: {e}")
+        
+        # Sleep for 24 hours before checking again
+        await asyncio.sleep(86400)
+
 FETCH_SEMAPHORE = asyncio.Semaphore(200)
 
 @app.route("/proxy_thumbnail")
 async def proxy_thumbnail():
     url = request.args.get("url")
     if not url or UPSTREAM_CLIENT is None: return "Error", 400
+    
+    # --- Cache Read ---
+    cache_key = hashlib.md5(url.encode()).hexdigest()
+    cache_path = os.path.join(THUMB_CACHE_DIR, cache_key)
+    
+    if os.path.exists(cache_path):
+        # Check if younger than 30 days (2592000 seconds)
+        if time.time() - os.path.getmtime(cache_path) < 2592000:
+            response = await send_file(cache_path)
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            return response
+            
+    # --- Upstream Fetch ---
     fwd_headers = {h: request.headers.get(h) for h in ("If-None-Match", "If-Modified-Since", "Range") if request.headers.get(h)}
     async with FETCH_SEMAPHORE:
         req = UPSTREAM_CLIENT.build_request("GET", url, headers=fwd_headers, cookies=mam_session_cookies)
         r = await UPSTREAM_CLIENT.send(req, stream=True)
         passthrough = {h: r.headers.get(h) for h in ("Content-Type", "Content-Length", "Cache-Control", "ETag", "Last-Modified", "Accept-Ranges", "Content-Range") if r.headers.get(h)}
         passthrough.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+        
         if r.status_code == 304:
             await r.aclose()
             return Response(status=304, headers=passthrough)
+            
         async def body():
+            temp_path = cache_path + ".tmp"
+            should_cache = r.status_code == 200
             try:
-                async for chunk in r.aiter_bytes(): yield chunk
-            finally: await r.aclose()
+                file_handle = open(temp_path, 'wb') if should_cache else None
+                
+                async for chunk in r.aiter_bytes(): 
+                    if file_handle: file_handle.write(chunk)
+                    yield chunk
+                
+                if file_handle:
+                    file_handle.close()
+                    # Atomic move: prevents partial files if the script crashes mid-download
+                    os.rename(temp_path, cache_path)
+            except Exception:
+                if should_cache and os.path.exists(temp_path): 
+                    os.remove(temp_path)
+                raise
+            finally: 
+                await r.aclose()
+
         return Response(body(), status=r.status_code, headers=passthrough)
 
 @app.route("/update_settings", methods=["POST"])
