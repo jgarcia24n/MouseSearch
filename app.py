@@ -1061,7 +1061,7 @@ async def client_add_torrent():
         
         if result['status'] == 'success':
             # Extract additional metadata from incoming_data
-            series_info = incoming_data.get('series_info', '')
+            series_info = parse_series_info(incoming_data.get('series_info', ''))
             main_cat = incoming_data.get('main_cat', '')
             download_link = incoming_data.get('download_link', '')
             
@@ -1096,7 +1096,7 @@ async def client_add_torrent():
             auto_organize_warning = "Unable to calculate hash - auto-organization will not work."
         else:
             # Extract additional metadata from incoming_data
-            series_info = incoming_data.get('series_info', '')
+            series_info = parse_series_info(incoming_data.get('series_info', ''))
             main_cat = incoming_data.get('main_cat', '')
             download_link = incoming_data.get('download_link', '')
             
@@ -1262,6 +1262,15 @@ def get_category_name(category_num):
     except (ValueError, TypeError):
         return "unknown"
 
+def parse_series_info(series_info_str):
+    """Parse series_info from JSON string to object. Returns {} if empty or invalid."""
+    if not series_info_str:
+        return {}
+    try:
+        return json.loads(series_info_str)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
 async def broadcast_payload(payload: dict):
     """Broadcast a generic payload to all connected SSE clients."""
     payload_json = json.dumps(payload)
@@ -1400,7 +1409,7 @@ async def mam_search():
                             "added_on": datetime.now().isoformat(),
                             "status": "unknown",
                             "retry_count": 0,
-                            "series_info": item.get('series_info', ''),
+                            "series_info": parse_series_info(item.get('series_info', '')),
                             "category": get_category_name(item.get('main_cat', '')),
                             "download_link": item.get('download_link', '')
                         }
