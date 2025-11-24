@@ -116,6 +116,17 @@
     .bd-mode-toggle .dropdown-menu .active .bi {
       display: block !important;
     }
+
+    /* Visual cue that the header is clickable */
+    .cursor-pointer {
+      cursor: pointer;
+    }
+
+    /* Prevent text selection when rapidly clicking the header */
+    .noselect {
+      user-select: none;
+      -webkit-user-select: none;
+    }
   </style>
 
 
@@ -693,11 +704,8 @@
           <div class="tab-pane fade" id="organize-pane" role="tabpanel" aria-labelledby="organize-tab" tabindex="0">
             <h6 class=" text-uppercase mb-3 d-flex align-items-center gap-1">
               Triggers
-              <i class="bi bi-info-circle-fill text-secondary ms-1" 
-                data-bs-html="true" 
-                data-bs-toggle="tooltip" 
-                data-bs-placement="top" 
-                title="<div class='text-start'>
+              <i class="bi bi-info-circle-fill text-secondary ms-1" data-bs-html="true" data-bs-toggle="tooltip"
+                data-bs-placement="top" title="<div class='text-start'>
                           <div class='fw-bold mb-1'>When should auto-organize be run?</div>
                           <ul class='list-unstyled mb-0'>
                             <li>- immediately after download?</li>
@@ -706,52 +714,61 @@
                         </div>">
               </i>
             </h6>
-            <div class="card card-body border-secondary-subtle mb-4">
-              <div class="form-check form-switch mb-3">
-                <input class="form-check-input" type="checkbox" id="AUTO_ORGANIZE_ON_ADD" name="AUTO_ORGANIZE_ON_ADD" {%
-                  if AUTO_ORGANIZE_ON_ADD %}checked{% endif %}>
-                <label class="form-check-label" for="AUTO_ORGANIZE_ON_ADD">Organize immediately on download</label>
+            <div class="card mb-3 border-secondary-subtle">
+              <div
+                class="card-header bg-transparent d-flex justify-content-between align-items-center py-2 cursor-pointer noselect"
+                onclick="toggleCardSwitch('AUTO_ORGANIZE_ON_ADD')">
+                <span class="small fw-bold">
+                  <i class="bi bi-magic me-1"></i> Organize on Download
+                </span>
+                <div class="form-check form-switch m-0">
+                  <input class="form-check-input" type="checkbox" id="AUTO_ORGANIZE_ON_ADD" name="AUTO_ORGANIZE_ON_ADD"
+                    {% if AUTO_ORGANIZE_ON_ADD %}checked{% endif %} onclick="event.stopPropagation()">
+                </div>
               </div>
-              <div class="form-check form-switch mb-2">
-                <input class="form-check-input" type="checkbox" id="AUTO_ORGANIZE_ON_SCHEDULE"
-                  name="AUTO_ORGANIZE_ON_SCHEDULE" {% if AUTO_ORGANIZE_ON_SCHEDULE %}checked{% endif %}>
-                <label class="form-check-label" for="AUTO_ORGANIZE_ON_SCHEDULE">Enable Scheduled Scan</label>
+
+            </div>
+
+            <div class="card mb-3 border-secondary-subtle">
+              <div
+                class="card-header bg-transparent d-flex justify-content-between align-items-center py-2 cursor-pointer noselect"
+                onclick="toggleCardSwitch('AUTO_ORGANIZE_ON_SCHEDULE')">
+                <span class="small fw-bold">
+                  <i class="bi bi-clock-history me-1"></i> Organize on a Schedule
+                </span>
+                <div class="form-check form-switch m-0">
+                  <input class="form-check-input" type="checkbox" id="AUTO_ORGANIZE_ON_SCHEDULE"
+                    name="AUTO_ORGANIZE_ON_SCHEDULE" {% if AUTO_ORGANIZE_ON_SCHEDULE %}checked{% endif %}
+                    data-collapse-target="#organize-interval-container" onclick="event.stopPropagation()">
+                </div>
               </div>
-              <div class="mb-0">
-                <label for="AUTO_ORGANIZE_INTERVAL_HOURS" class="form-label small">Scan Interval (hours)</label>
-                <input type="number" class="form-control " id="AUTO_ORGANIZE_INTERVAL_HOURS"
-                  name="AUTO_ORGANIZE_INTERVAL_HOURS" min="1" value="{{ AUTO_ORGANIZE_INTERVAL_HOURS }}">
+
+              <div id="organize-interval-container" class="collapse {% if AUTO_ORGANIZE_ON_SCHEDULE %}show{% endif %}">
+                <div class="card-body pt-2 pb-2">
+                  <div class="mb-1">
+                    <label for="AUTO_ORGANIZE_INTERVAL_HOURS" class="form-label small mb-1">Scan Interval
+                      (hours)</label>
+                    <input type="number" class="form-control" id="AUTO_ORGANIZE_INTERVAL_HOURS"
+                      name="AUTO_ORGANIZE_INTERVAL_HOURS" min="1" value="{{ AUTO_ORGANIZE_INTERVAL_HOURS }}">
+                  </div>
+                </div>
               </div>
             </div>
 
+            <hr class="border-secondary-subtle my-4">
 
-            <h6 class="text-uppercase mb-3 d-flex align-items-center gap-1">
-              Path Configuration
-              <i class="bi bi-info-circle-fill text-secondary ms-1" 
-                data-bs-html="true" 
-                data-bs-toggle="tooltip" 
-                data-bs-placement="top" 
-                title="only used if auto-organize is enabled">
-              </i>
-            </h6>
-            <div class="card card-body border-secondary-subtle mb-4">
+            <div id="path-configuration-container">
+              <h6 class="text-uppercase mb-3">Path Configuration</h6>
+
               <div class="mb-3">
-                <label for="TORRENT_DOWNLOAD_PATH" class="form-label small d-flex align-items-center gap-1">
-                  Download Source Path
-                  <i class="bi bi-info-circle-fill text-secondary ms-1" data-bs-toggle="tooltip" data-bs-placement="top"
-                    title="Where your completed torrents are stored."></i>
-                </label>
-                <input type="text" class="form-control font-monospace" id="TORRENT_DOWNLOAD_PATH"
-                  name="TORRENT_DOWNLOAD_PATH" value="{{ TORRENT_DOWNLOAD_PATH }}">
+                <label for="TORRENT_DOWNLOAD_PATH" class="form-label small">Download Source Path</label>
+                <input type="text" class="form-control" id="TORRENT_DOWNLOAD_PATH" name="TORRENT_DOWNLOAD_PATH"
+                  value="{{ TORRENT_DOWNLOAD_PATH }}">
               </div>
 
-              <div class="mb-4">
-                <label for="ORGANIZED_PATH" class="form-label small d-flex align-items-center gap-1">
-                  Organized Destination Path
-                  <i class="bi bi-info-circle-fill text-secondary ms-1" data-bs-toggle="tooltip" data-bs-placement="top"
-                    title="Where you would like your organized torrents to be stored."></i>
-                </label>
-                <input type="text" class="form-control font-monospace" id="ORGANIZED_PATH" name="ORGANIZED_PATH"
+              <div class="mb-3">
+                <label for="ORGANIZED_PATH" class="form-label small">Organized Destination Path</label>
+                <input type="text" class="form-control" id="ORGANIZED_PATH" name="ORGANIZED_PATH"
                   value="{{ ORGANIZED_PATH }}">
               </div>
             </div>
@@ -760,81 +777,77 @@
 
           <div class="tab-pane fade" id="helpers-pane" role="tabpanel" aria-labelledby="helpers-tab" tabindex="0">
 
-            <div class="card mb-3 border-secondary-subtle">
-              <div class="card-header bg-transparent d-flex justify-content-between align-items-center py-2">
-                <span class="small fw-bold">
-                  <i class="bi bi-hdd-network me-1"></i> Auto-Update IP
-                </span>
+            <div class="card mb-3 border-secondary-subtle toggle-card">
+              <div
+                class="card-header bg-transparent d-flex justify-content-between align-items-center py-2 cursor-pointer noselect"
+                onclick="toggleCardSwitch('ENABLE_DYNAMIC_IP_UPDATE')">
+                <span class="small fw-bold d-flex align-items-center"><i class="bi bi-hdd-network me-1"></i> Auto-Update
+                  IP</span>
                 <div class="form-check form-switch m-0">
                   <input class="form-check-input" type="checkbox" id="ENABLE_DYNAMIC_IP_UPDATE"
-                    name="ENABLE_DYNAMIC_IP_UPDATE" {% if ENABLE_DYNAMIC_IP_UPDATE %}checked{% endif %}>
+                    name="ENABLE_DYNAMIC_IP_UPDATE" {% if ENABLE_DYNAMIC_IP_UPDATE %}checked{% endif %}
+                    data-collapse-target="#collapse-ip">
                 </div>
               </div>
-              <div class="card-body pt-2 pb-2">
-                <label for="DYNAMIC_IP_UPDATE_INTERVAL_HOURS" class="form-label small mb-1 d-flex align-items-center gap-1">
-                  Update Interval (hours)
-                  <i class="bi bi-info-circle-fill text-secondary ms-1" data-bs-toggle="tooltip" data-bs-placement="top"
-                    title="How often to sync your IP address with MAM (to keep MouseSearch and your torrents running!)."></i>
-                </label>
-                <input type="number" class="form-control " id="DYNAMIC_IP_UPDATE_INTERVAL_HOURS"
-                  name="DYNAMIC_IP_UPDATE_INTERVAL_HOURS" min="1" value="{{ DYNAMIC_IP_UPDATE_INTERVAL_HOURS }}">
+              <div id="collapse-ip" class="collapse {% if ENABLE_DYNAMIC_IP_UPDATE %}show{% endif %}">
+                <div class="card-body pt-2 pb-2">
+                  <label for="DYNAMIC_IP_UPDATE_INTERVAL_HOURS" class="form-label small mb-1">Update Interval
+                    (hours)</label>
+                  <input type="number" class="form-control" id="DYNAMIC_IP_UPDATE_INTERVAL_HOURS"
+                    name="DYNAMIC_IP_UPDATE_INTERVAL_HOURS" min="1" value="{{ DYNAMIC_IP_UPDATE_INTERVAL_HOURS }}">
+                </div>
               </div>
             </div>
 
-            <div class="card mb-3 border-secondary-subtle">
-              <div class="card-header bg-transparent d-flex justify-content-between align-items-center py-2">
-                <span class="small fw-bold"><i class="bi bi-star-fill me-1"></i> Auto-Max VIP</span>
+            <div class="card mb-3 border-secondary-subtle toggle-card">
+              <div
+                class="card-header bg-transparent d-flex justify-content-between align-items-center py-2 cursor-pointer noselect"
+                onclick="toggleCardSwitch('AUTO_BUY_VIP')">
+                <span class="small fw-bold d-flex align-items-center"><i class="bi bi-star-fill me-1"></i> Auto-Max
+                  VIP</span>
                 <div class="form-check form-switch m-0">
                   <input class="form-check-input" type="checkbox" id="AUTO_BUY_VIP" name="AUTO_BUY_VIP" {% if
-                    AUTO_BUY_VIP %}checked{% endif %}>
+                    AUTO_BUY_VIP %}checked{% endif %} data-collapse-target="#collapse-vip">
                 </div>
               </div>
-              <div class="card-body pt-2 pb-2">
-                <label for="AUTO_BUY_VIP_INTERVAL_HOURS" class="form-label small mb-1 d-flex align-items-center gap-1">
-                  Top-up Interval (hours)
-                  <i class="bi bi-info-circle-fill text-secondary ms-1" data-bs-toggle="tooltip"
-                    title="Keeps your VIP time topped up to the maximum allowed (1250 BP/week)."></i>
-                </label>
-                <input type="number" class="form-control " id="AUTO_BUY_VIP_INTERVAL_HOURS"
-                  name="AUTO_BUY_VIP_INTERVAL_HOURS" min="1" value="{{ AUTO_BUY_VIP_INTERVAL_HOURS }}">
+              <div id="collapse-vip" class="collapse {% if AUTO_BUY_VIP %}show{% endif %}">
+                <div class="card-body pt-2 pb-2">
+                  <label for="AUTO_BUY_VIP_INTERVAL_HOURS" class="form-label small mb-1">Top-up Interval (hours)</label>
+                  <input type="number" class="form-control" id="AUTO_BUY_VIP_INTERVAL_HOURS"
+                    name="AUTO_BUY_VIP_INTERVAL_HOURS" min="1" value="{{ AUTO_BUY_VIP_INTERVAL_HOURS }}">
+                </div>
               </div>
             </div>
 
             <hr class="border-secondary-subtle my-4">
-
             <h6 class="text-uppercase mb-3">Upload Credit Automation</h6>
 
             <div class="row g-3 mb-3">
               <div class="col-12">
-                <div class="card h-100 border-secondary-subtle">
-                  <div class="card-header bg-transparent py-2 d-flex justify-content-between align-items-center">
-                    <span><span class="small fw-bold">Auto Buy</span> (for low ratio)</span>
+                <div class="card h-100 border-secondary-subtle toggle-card">
+                  <div
+                    class="card-header bg-transparent py-2 d-flex justify-content-between align-items-center cursor-pointer noselect"
+                    onclick="toggleCardSwitch('AUTO_BUY_UPLOAD_ON_RATIO')">
+                    <span><span class="small fw-bold">Auto Buy</span> (low ratio)</span>
                     <div class="form-check form-switch m-0">
                       <input class="form-check-input" type="checkbox" id="AUTO_BUY_UPLOAD_ON_RATIO"
-                        name="AUTO_BUY_UPLOAD_ON_RATIO" {% if AUTO_BUY_UPLOAD_ON_RATIO %}checked{% endif %}>
+                        name="AUTO_BUY_UPLOAD_ON_RATIO" {% if AUTO_BUY_UPLOAD_ON_RATIO %}checked{% endif %}
+                        data-collapse-target="#collapse-ratio">
                     </div>
                   </div>
-                  <div class="card-body p-2">
-                    <div class="row g-2">
-                      <div class="col-6">
-                        <label class="small text-body-secondary d-block d-flex align-items-center gap-1">
-                          Threshold
-                          <i class="bi bi-info-circle-fill text-secondary ms-1" data-bs-toggle="tooltip"
-                            title="Triggers purchase if your MAM ratio falls below this value. MAM requires > 1.0."></i>
-                        </label>
-                        <input type="number" step="0.1" class="form-control " id="AUTO_BUY_UPLOAD_RATIO_THRESHOLD"
-                          name="AUTO_BUY_UPLOAD_RATIO_THRESHOLD" min="1.0"
-                          value="{{ AUTO_BUY_UPLOAD_RATIO_THRESHOLD }}">
-                      </div>
-                      <div class="col-6">
-                        <label class="small text-body-secondary d-block d-flex align-items-center gap-1">
-                          Buy (GB)
-                          <i class="bi bi-info-circle-fill text-secondary ms-1" data-bs-toggle="tooltip"
-                            title="Amount of credit to buy when triggered. 500 BP per GB."></i>
-                        </label>
-                        <input type="number" step="0.5" class="form-control  upload-amount-input"
-                          id="AUTO_BUY_UPLOAD_RATIO_AMOUNT" name="AUTO_BUY_UPLOAD_RATIO_AMOUNT" min="1"
-                          value="{{ AUTO_BUY_UPLOAD_RATIO_AMOUNT }}">
+                  <div id="collapse-ratio" class="collapse {% if AUTO_BUY_UPLOAD_ON_RATIO %}show{% endif %}">
+                    <div class="card-body p-2">
+                      <div class="row g-2">
+                        <div class="col-6">
+                          <label class="small text-body-secondary">Threshold</label>
+                          <input type="number" step="0.1" class="form-control" name="AUTO_BUY_UPLOAD_RATIO_THRESHOLD"
+                            value="{{ AUTO_BUY_UPLOAD_RATIO_THRESHOLD }}">
+                        </div>
+                        <div class="col-6">
+                          <label class="small text-body-secondary">Buy (GB)</label>
+                          <input type="number" step="0.5" class="form-control upload-amount-input"
+                            name="AUTO_BUY_UPLOAD_RATIO_AMOUNT" value="{{ AUTO_BUY_UPLOAD_RATIO_AMOUNT }}">
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -842,35 +855,31 @@
               </div>
 
               <div class="col-12">
-                <div class="card h-100 border-secondary-subtle">
-                  <div class="card-header bg-transparent py-2 d-flex justify-content-between align-items-center">
-                    <span><span class="small fw-bold">Auto Buy</span> (for low upload credit)</span>
+                <div class="card h-100 border-secondary-subtle toggle-card">
+                  <div
+                    class="card-header bg-transparent py-2 d-flex justify-content-between align-items-center cursor-pointer noselect"
+                    onclick="toggleCardSwitch('AUTO_BUY_UPLOAD_ON_BUFFER')">
+                    <span><span class="small fw-bold">Auto Buy</span> (low buffer)</span>
                     <div class="form-check form-switch m-0">
                       <input class="form-check-input" type="checkbox" id="AUTO_BUY_UPLOAD_ON_BUFFER"
-                        name="AUTO_BUY_UPLOAD_ON_BUFFER" {% if AUTO_BUY_UPLOAD_ON_BUFFER %}checked{% endif %}>
+                        name="AUTO_BUY_UPLOAD_ON_BUFFER" {% if AUTO_BUY_UPLOAD_ON_BUFFER %}checked{% endif %}
+                        data-collapse-target="#collapse-buffer">
                     </div>
                   </div>
-                  <div class="card-body p-2">
-                    <div class="row g-2">
-                      <div class="col-6">
-                        <label class="small text-body-secondary d-block d-flex align-items-center gap-1">
-                          Threshold (GB)
-                          <i class="bi bi-info-circle-fill text-secondary ms-1" data-bs-toggle="tooltip"
-                            title="Triggers purchase if your buffer (Uploaded - Downloaded) drops below this GB amount."></i>
-                        </label>
-                        <input type="number" step="0.5" class="form-control " id="AUTO_BUY_UPLOAD_BUFFER_THRESHOLD"
-                          name="AUTO_BUY_UPLOAD_BUFFER_THRESHOLD" min="0"
-                          value="{{ AUTO_BUY_UPLOAD_BUFFER_THRESHOLD }}">
-                      </div>
-                      <div class="col-6">
-                        <label class="small text-body-secondary d-block d-flex align-items-center gap-1">
-                          Buy (GB)
-                          <i class="bi bi-info-circle-fill text-secondary ms-1" data-bs-toggle="tooltip"
-                            title="Amount of credit to buy when triggered. 500 BP per GB."></i>
-                        </label>
-                        <input type="number" step="0.5" class="form-control  upload-amount-input"
-                          id="AUTO_BUY_UPLOAD_BUFFER_AMOUNT" name="AUTO_BUY_UPLOAD_BUFFER_AMOUNT" min="1"
-                          value="{{ AUTO_BUY_UPLOAD_BUFFER_AMOUNT }}" list="upload-amounts-list">
+                  <div id="collapse-buffer" class="collapse {% if AUTO_BUY_UPLOAD_ON_BUFFER %}show{% endif %}">
+                    <div class="card-body p-2">
+                      <div class="row g-2">
+                        <div class="col-6">
+                          <label class="small text-body-secondary">Threshold (GB)</label>
+                          <input type="number" step="0.5" class="form-control" name="AUTO_BUY_UPLOAD_BUFFER_THRESHOLD"
+                            value="{{ AUTO_BUY_UPLOAD_BUFFER_THRESHOLD }}">
+                        </div>
+                        <div class="col-6">
+                          <label class="small text-body-secondary">Buy (GB)</label>
+                          <input type="number" step="0.5" class="form-control upload-amount-input"
+                            name="AUTO_BUY_UPLOAD_BUFFER_AMOUNT" value="{{ AUTO_BUY_UPLOAD_BUFFER_AMOUNT }}"
+                            list="upload-amounts-list">
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -878,13 +887,9 @@
               </div>
             </div>
 
-            <div class="mb-3">
-              <label for="AUTO_BUY_UPLOAD_CHECK_INTERVAL_HOURS" class="form-label small d-flex align-items-center gap-1">
-                Check Interval (hours)
-                <i class="bi bi-info-circle-fill text-secondary ms-1" data-bs-toggle="tooltip"
-                  title="How often to check against these thresholds."></i>
-              </label>
-              <input type="number" class="form-control " id="AUTO_BUY_UPLOAD_CHECK_INTERVAL_HOURS"
+            <div class="mb-3" id="upload-check-interval-container">
+              <label for="AUTO_BUY_UPLOAD_CHECK_INTERVAL_HOURS" class="form-label small">Check Interval (hours)</label>
+              <input type="number" class="form-control" id="AUTO_BUY_UPLOAD_CHECK_INTERVAL_HOURS"
                 name="AUTO_BUY_UPLOAD_CHECK_INTERVAL_HOURS" min="1" value="{{ AUTO_BUY_UPLOAD_CHECK_INTERVAL_HOURS }}">
             </div>
 
@@ -893,7 +898,6 @@
               <option value="{{ amount }}"></option>
               {% endfor %}
             </datalist>
-
           </div>
         </div>
 
