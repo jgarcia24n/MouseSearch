@@ -47,5 +47,4 @@ CMD exec hypercorn --bind ${ADDRESS}:${PORT} \
      --access-logfile - \
      --error-logfile - \
      --log-level info app:app \
-     --graceful-timeout 5 \
-     --shutdown-timeout 5
+     --graceful-timeout 5
