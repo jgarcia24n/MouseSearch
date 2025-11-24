@@ -478,12 +478,19 @@ document.addEventListener("DOMContentLoaded", function () {
     //  BUTTON HANDLERS
     // ============================================================
 
-    document.getElementById('save-settings-button')?.addEventListener('click', function () {
+document.getElementById('save-settings-button')?.addEventListener('click', function () {
         fetch('/update_settings', { method: 'POST', body: new FormData(document.getElementById('settings-form')) })
             .then(response => response.json())
             .then(data => {
                 showToast(data.message, data.status === 'success' ? 'success' : 'danger');
                 if (data.status === 'success') {
+
+                    // Update the data attribute to the new value so refreshCategories doesn't revert it
+                    const catDropdown = document.getElementById('TORRENT_CLIENT_CATEGORY');
+                    if (catDropdown) {
+                        catDropdown.dataset.currentValue = catDropdown.value;
+                    }
+
                     const clientLink = document.getElementById('clientLink');
                     const clientUrl = document.getElementById('TORRENT_CLIENT_URL').value;
                     if (clientLink) { clientLink.href = clientUrl; clientLink.textContent = clientUrl; }
