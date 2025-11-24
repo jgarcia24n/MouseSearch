@@ -49,14 +49,14 @@ async def startup():
     await load_new_app_config()
     if not scheduler.running:
         scheduler.start()
-        app.logger.info("AsyncIOScheduler started")
+        app.logger.debug("AsyncIOScheduler started")
 
     global UPSTREAM_CLIENT
     transport = AsyncHTTPTransport(http2=True, retries=2)
     limits = Limits(max_connections=200, max_keepalive_connections=50, keepalive_expiry=120.0)
     timeout = Timeout(connect=5.0, read=15.0, write=15.0, pool=None)
     UPSTREAM_CLIENT = httpx.AsyncClient(transport=transport, limits=limits, timeout=timeout)
-    app.logger.info("Shared httpx AsyncClient initialized")
+    app.logger.debug("Shared httpx AsyncClient initialized")
     
     # --- Initialize Active Monitoring on Startup ---
     metadata = load_database()
@@ -222,13 +222,13 @@ async def load_new_app_config():
     
     # Load the pre-calculated upload options
     app.config["UPLOAD_OPTIONS"] = load_upload_options()
-    app.logger.info(f"Loaded {len(app.config['UPLOAD_OPTIONS'])} valid upload purchase options.")
+    app.logger.debug(f"Loaded {len(app.config['UPLOAD_OPTIONS'])} valid upload purchase options.")
     
     # Update path globals from config
     global ORGANIZED_PATH, TORRENT_DOWNLOAD_PATH
     ORGANIZED_PATH = Path(new_config.get("ORGANIZED_PATH", FALLBACK_CONFIG["ORGANIZED_PATH"])).resolve()
     TORRENT_DOWNLOAD_PATH = Path(new_config.get("TORRENT_DOWNLOAD_PATH", FALLBACK_CONFIG["TORRENT_DOWNLOAD_PATH"])).resolve()
-    app.logger.info(f"Paths updated - ORGANIZED: {ORGANIZED_PATH}, DOWNLOAD: {TORRENT_DOWNLOAD_PATH}")
+    app.logger.debug(f"Paths updated - ORGANIZED: {ORGANIZED_PATH}, DOWNLOAD: {TORRENT_DOWNLOAD_PATH}")
     
     global mam_session_cookies
     mam_session_cookies = {"mam_id": app.config.get("MAM_ID")}
