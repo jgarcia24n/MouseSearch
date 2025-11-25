@@ -13,7 +13,10 @@
     <div class="col-6 col-md-4 d-flex justify-content-center align-items-center">
         <a href="https://www.myanonamouse.net/t/{{ result.id }}" target="_blank">
             <img class="img-fluid me-2 rounded" src="{{ url_for('proxy_thumbnail', url=result.thumbnail) }}"
-                alt="Thumbnail" loading="lazy" style="object-fit: contain;">
+                alt="Thumbnail" 
+                loading="lazy" 
+                style="object-fit: contain;" 
+                onerror="this.onerror=null; this.src='/static/icons/no_cover.png';">
         </a>
     </div>
 
