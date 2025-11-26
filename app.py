@@ -1510,6 +1510,23 @@ async def cleanup_cache_task():
         # Sleep for 24 hours before checking again
         await asyncio.sleep(86400)
 
+@app.route('/system/public_ip')
+async def get_public_ip():
+    """
+    Fetches the backend's public IP address.
+    """
+    
+    try:
+        # We use httpx instead of os.system('curl') because it is async,
+        # non-blocking, and works reliably in serverless environments.
+        async with httpx.AsyncClient() as client:
+            # Fetch IPv4 address
+            response = await client.get('https://ifconfig.me/ip', timeout=5.0)
+            return jsonify({'ip': response.text.strip()})
+    except Exception as e:
+        app.logger.error(f"Failed to fetch public IP: {e}")
+        return jsonify({'error': 'Could not fetch IP'}), 500
+    
 FETCH_SEMAPHORE = asyncio.Semaphore(200)
 
 @app.route("/proxy_thumbnail")
