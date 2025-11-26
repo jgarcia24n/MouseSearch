@@ -29,6 +29,8 @@ app = Quart(__name__)
 
 UPSTREAM_CLIENT: httpx.AsyncClient | None = None
 
+torrent_client = None
+
 # --- Monitoring & Caching Globals ---
 monitoring_state = {} 
 monitor_task = None
@@ -235,12 +237,6 @@ async def load_new_app_config():
     
 
     global torrent_client
-    try:
-        torrent_client = get_torrent_client(app.config)
-        app.logger.info(f"Initialized torrent client: {app.config.get('TORRENT_CLIENT_TYPE', 'qbittorrent')}")
-    except Exception as e:
-        app.logger.error(f"Failed to initialize torrent client: {e}")
-        torrent_client = None
 
 # --- ACTIVE MONITORING & CACHING LOGIC ---
 
@@ -435,14 +431,12 @@ async def monitor_downloads_loop():
             for h in finished_hashes:
                 app.logger.info(f"[MONITOR] Torrent {h} finished. Triggering Auto-Organize.")
 
-                # --- MERGE ADDITION START: Broadcast final 100% status to UI ---
                 if h in torrents_info:
                     final_status = {h: torrents_info[h]}
                     await broadcast_payload({
                         "event": "torrent-progress",
                         "torrents": final_status
                     })
-                # --- MERGE ADDITION END ---
 
                 try:
                     success, msg = await _perform_organization(h)
@@ -1275,12 +1269,9 @@ async def broadcast_payload(payload: dict):
     for queue in list(connected_websockets):
         try:
             await queue.put(payload_json)
-        except Exception as e:
-            app.logger.debug(f"Failed to broadcast to queue: {e}")
-            disconnected.add(queue)
-    # Clean up disconnected queues
-    for queue in disconnected:
-        connected_websockets.discard(queue)
+        except Exception:
+            # Remove immediately, safe because we are iterating a list copy
+            connected_websockets.discard(queue)
 
 async def broadcast_toast(message: str, category: str = "primary"):
     """Broadcast a toast notification to all connected SSE clients."""
