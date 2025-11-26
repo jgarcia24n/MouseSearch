@@ -242,20 +242,6 @@ async def load_new_app_config():
         app.logger.error(f"Failed to initialize torrent client: {e}")
         torrent_client = None
 
-initial_config = load_config()
-app.secret_key = initial_config["QUART_SECRET_KEY"]
-app.config.update(initial_config)
-app.config["BASE_HEADERS"] = {
-    "CF-Access-Client-Id": initial_config.get("CF_ACCESS_CLIENT_ID"),
-    "CF-Access-Client-Secret": initial_config.get("CF_ACCESS_CLIENT_SECRET"),
-}
-mam_session_cookies = {"mam_id": initial_config.get("MAM_ID")}
-torrent_client = None
-
-# Initialize path globals from initial config
-ORGANIZED_PATH = Path(initial_config.get("ORGANIZED_PATH", FALLBACK_CONFIG["ORGANIZED_PATH"])).resolve()
-TORRENT_DOWNLOAD_PATH = Path(initial_config.get("TORRENT_DOWNLOAD_PATH", FALLBACK_CONFIG["TORRENT_DOWNLOAD_PATH"])).resolve()
-
 # --- ACTIVE MONITORING & CACHING LOGIC ---
 
 def start_monitoring_loop():
