@@ -339,16 +339,21 @@ async function fetchPublicIP() {
                 document.querySelectorAll('.backend-ip-display').forEach(el => el.textContent = data.ip);
                 // Show the badge in the helpers tab
                 document.querySelectorAll('.backend-ip-display-badge').forEach(el => el.style.display = 'inline-block');
-
                 // Setup Copy Buttons
                 document.querySelectorAll('.copy-ip-btn').forEach(btn => {
-                    btn.onclick = (e) => {
-                        navigator.clipboard.writeText(data.ip);
-                        // Visual feedback
-                        const originalIcon = btn.innerHTML;
-                        btn.innerHTML = '<i class="bi bi-check2 text-success"></i>';
-                        setTimeout(() => btn.innerHTML = originalIcon, 2000);
-                    };
+                    // Check if Clipboard API is supported/allowed
+                    if (navigator.clipboard) {
+                        btn.onclick = (e) => {
+                            navigator.clipboard.writeText(data.ip);
+                            // Visual feedback
+                            const originalIcon = btn.innerHTML;
+                            btn.innerHTML = '<i class="bi bi-check2 text-success"></i>';
+                            setTimeout(() => btn.innerHTML = originalIcon, 2000);
+                        };
+                    } else {
+                        // If API is missing (e.g. HTTP), hide the button entirely
+                        btn.style.display = 'none';
+                    }
                 });
             } else {
                 document.querySelectorAll('.backend-ip-display').forEach(el => el.textContent = "Error");
