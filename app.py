@@ -8,7 +8,7 @@ import time
 import hashlib
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from httpx import RequestError, Limits, Timeout, AsyncHTTPTransport
+from httpx import Limits, Timeout, AsyncHTTPTransport
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import re
