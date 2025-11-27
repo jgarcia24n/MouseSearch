@@ -13,9 +13,7 @@
     <div class="col-6 col-md-4 d-flex justify-content-center align-items-center">
         <a href="https://www.myanonamouse.net/t/{{ result.id }}" target="_blank">
             <img class="img-fluid me-2 rounded" src="{{ url_for('proxy_thumbnail', url=result.thumbnail) }}"
-                alt="Thumbnail" 
-                loading="lazy" 
-                style="object-fit: contain;" 
+                alt="Thumbnail" loading="lazy" style="object-fit: contain;"
                 onerror="this.onerror=null; this.src='/static/icons/no_cover.png';">
         </a>
     </div>
@@ -93,6 +91,12 @@
                 {% endfor %}
             </select>
             <label for="catSelect{{ result.id }}">Torrent Category</label>
+        </div>
+
+                <div class="text-center mt-1 lh-1">
+            <a href="{{ result.download_link | safe }}" class="small text-muted text-decoration-none" target="_blank">
+                <i class="bi bi-download" style="font-size: 0.8rem;"></i> Save .torrent file
+            </a>
         </div>
 
         <div class="response-message-result mt-2"></div>

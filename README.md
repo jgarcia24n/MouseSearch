@@ -119,6 +119,8 @@ The application will be available at `http://<your-server-ip>:5000` (or your cus
 
 **Environment variables are completely optional.** You can configure all settings directly through the web interface after launching the application.
 
+> **Settings saved in `config.json` (i.e. through the web interface) override environment values. To force env-only configuration, delete `config.json`**
+
 ### Environment Variables (`.env`)
 
 Open the `.env` file and configure the following settings.
@@ -164,6 +166,8 @@ MouseSearch supports modular torrent clients. Currently supported: **qBittorrent
 | `TORRENT_DOWNLOAD_PATH` | If auto-organization is enabled | The *container* path where your torrent client saves completed files for this category (e.g., `/downloads/torrents/`). |
 | `ENABLE_FILESYSTEM_THUMBNAIL_CACHE` | No | Set to `true` to enable filesystem caching of thumbnail images (stores in `DATA_PATH/cache/thumbnails`). Defaults to `false`. **Enable this if you experience slow thumbnail loading or suspect you're hitting MAM rate limits.** Cached thumbnails expire after 30 days. |
 | `THUMBNAIL_CACHE_MAX_SIZE_MB` | No | Maximum cache size in megabytes (only applies when `ENABLE_FILESYSTEM_THUMBNAIL_CACHE` is enabled). Oldest files are deleted first when limit is exceeded. Defaults to `500`. |
+| `PUID` | No | (Docker only) User ID to run the container as. Set to your host user's UID for correct file permissions. |
+| `PGID` | No | (Docker only) Group ID to run the container as. Set to your host user's GID for correct file permissions. |
 
 **How to find your `MAM_ID`:**
 1.  In any web browser, navigate to [Security](https://www.myanonamouse.net/preferences/index.php?view=security) on Myanonamouse
@@ -178,7 +182,7 @@ MouseSearch supports modular torrent clients. Currently supported: **qBittorrent
 
 Your `compose.yaml` file tells Docker how to run the app and, most importantly, where your files are. You **must** map your download and data directories.
 
-Here is a recommended `compose.yaml`:
+Here is an example `compose.yaml`:
 
 ```yaml
 services:
@@ -190,14 +194,17 @@ services:
       - "5000:5000"
     volumes:
       - ./data:/data  # location that config and state files will be stored
-      # - /downloads:/downloads # where all downloads are stored (torrent client downloads and organized files) -- only needed if using auto-organize
+      - /downloads:/downloads # where all downloads are stored (torrent client downloads and organized files) -- only needed if using auto-organize
+      
       # see README.md for recommended structure and paths
       
-    # env_file: .env # optional: load environment variables from a file
+    env_file: .env # optional: load environment variables from a file
 
-    # Optional: Set the container's timezone to match your host (useful for logs and scheduled tasks)
     environment:
-      - TZ=America/Chicago
+      - TZ=America/Chicago 
+      # Change these to match your host user (run 'id' in terminal to check)
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
 ```
 
 **Note:** To build from source instead of using the pre-built image, replace `image: sevenlayercookie/mousesearch:latest` with `build: .` and ensure you've cloned the repository.
@@ -258,6 +265,13 @@ These can be enabled independently of each other:
     d.  Scans the source directory for all files and hard-links each one to the destination, maintaining the original torrent folder structure
     e.  Marks the torrent as `organized: true` in `database.json` (to prevent re-organizing later)
 
+### Path Customization & Series Support:
+When adding a torrent with `AUTO_ORGANIZE_ON_ADD` enabled, MouseSearch will present a confirmation window.
+
+- **Review Path**: You can modify the calculated Author/Title path manually before sending it to the client.
+
+- **Series Toggle**: If the book is part of a series, a "Series" button will appear. Clicking this automatically injects the series name into the path (e.g., Author/Series/Title).
+
 ### Critical Setup Requirement
 
 For hard links to work, your source (`TORRENT_DOWNLOAD_PATH`) and destination (`ORGANIZED_PATH`) directories **must**:
@@ -274,7 +288,6 @@ The easiest way to ensure this is to have a single parent directory (e.g., `/mnt
        downloads
        ├── organized <- where your organized files will appear (point Audiobookshelf here)
        └── torrents <- where your torrent client downloads files to
-
 
 **Correct `.env` and Host Path Example:**
 

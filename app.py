@@ -960,7 +960,21 @@ async def client_categories():
 
 @app.route('/client/add', methods=['POST'])
 async def client_add_torrent():
-    """Add a torrent to the configured client and REGISTER FOR MONITORING."""
+    """
+    Handles the addition of a new torrent to the torrent client, with support for buffer checks, custom download paths, and auto-organization.
+    Workflow:
+    - Ensures the torrent client is initialized and logs in.
+    - Parses incoming JSON data for torrent details, including optional custom_relative_path.
+    - Checks if the user's buffer is sufficient to download the torrent; if not, returns a response with recommended upload credit.
+    - If a MID (metadata ID) is present and auto-organization is enabled, adds the torrent immediately and stores metadata for later hash resolution.
+    - If no MID or auto-organization is disabled, calculates the torrent hash and stores metadata for auto-organization.
+    - Adds the torrent to the client and, if successful, starts monitoring for completion if auto-organization is enabled.
+    Args:
+        None (expects JSON data in the request body with keys such as 'torrent_url', 'author', 'title', 'id', 'category', 'size', 'series_info', 'main_cat', 'download_link', and optionally 'custom_relative_path').
+    Returns:
+        Flask Response: JSON response indicating success, error, or insufficient buffer, with appropriate HTTP status codes.
+    """
+
     if not torrent_client:
         return jsonify({'error': 'Client not initialized'}), 500
     
@@ -1614,7 +1628,14 @@ async def update_settings():
 # --- ORGANIZE LOGIC ---
 
 async def _perform_organization(hash_val: str) -> tuple[bool, str]:
-    """Performs the file organization for a given torrent hash."""
+    """
+    Performs the file organization for a given torrent hash.
+
+    Note:
+        If the torrent metadata contains a 'custom_relative_path', it will be used as the destination path
+        (relative to ORGANIZED_PATH), taking precedence over the default Author/Title folder generation.
+        If 'custom_relative_path' is not set, the destination will default to ORGANIZED_PATH/Author/Title.
+    """
     metadata = load_database()
     if hash_val not in metadata: return False, f"No metadata for hash {hash_val}."
     status = metadata[hash_val].get('status', 'pending')
