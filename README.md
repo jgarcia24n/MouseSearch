@@ -1,5 +1,8 @@
-# MouseSearch
+<div align="center" width="100%">
+    <img src="static/favicon/transparent.png" width="128" alt="" />
+</div>
 
+# MouseSearch
 MouseSearch is a self-hosted web application that provides a clean, fast search interface for MyAnonamouse (MAM). It connects directly to the MAM API for searching and supports modular torrent client integrations (currently qBittorrent) for one-click downloading, bridging the gap between your favorite tracker and your download client.
 
 

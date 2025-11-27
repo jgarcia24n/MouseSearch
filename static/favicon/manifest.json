@@ -1,6 +1,6 @@
 {
-  "name": "Mouse Search",
-  "short_name": "Mouse",
+  "name": "MouseSearch",
+  "short_name": "MouseSearch",
   "icons": [
     {
       "src": "/static/web-app-manifest-192x192.png",
