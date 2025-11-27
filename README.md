@@ -29,6 +29,10 @@ MouseSearch is a self-hosted web application that provides a clean, fast search 
 * **Containerization:** **Docker**
 * **APIs:** MyAnonamouse (MAM) & Modular Torrent Clients (qBittorrent)
 
+## Progressive Web App (PWA) Support
+
+MouseSearch is designed to be **mobile-friendly** and supports **Progressive Web App (PWA)** functionality. This means you can install and run it like a **native app** directly on your phone or desktop for an integrated user experience.
+
 ## Installation & Configuration
 
 MouseSearch can be deployed in two ways:
@@ -226,16 +230,19 @@ The application will be available at `http://<your-server-ip>:5000`.
 3.  **Configure your settings:** You can configure all settings directly through the web interface, or use the `.env` file.
 4.  Once configured, the dashboards should automatically update to "CONNECTED" and populate your user info.
 4.  Use the search bar to find content.
-5.  In the results, select a torrent category (if desired) and click "Download".
+5.  In the results, select a torrent category (if desired) and click "Download". A dialog will appear, allowing you to confirm or change the final `organized` destination.
 6.  The torrent will be added, and a status badge will appear, polling your torrent client for live progress.
 
----
+### Path Customization & Series Support:
+When adding a torrent with `AUTO_ORGANIZE_ON_ADD` enabled, MouseSearch will present a confirmation window.
+
+- **Review Path**: You can modify the calculated Author/Title path manually before sending it to the client.
+
+- **Series Toggle**: If the book is part of a series, a "Series" button will appear. Clicking this automatically injects the series name into the path (e.g., Author/Series/Title).
 
 ## [BETA] Auto-Organization Feature
 
-**Note:** This feature is in beta. Please back up your `database.json` file and test with a few torrents first.
-
-This feature is designed to automate your media library. When enabled, it hard-links completed audio files from your "messy" download directory into a "clean" library directory, sorted by `Author/Title`.
+This feature is designed to automate your media library. When enabled, it hard-links completed audio files from your "messy" download directory into a "clean" library directory, organized in subdirectories by `Author/Title` or `Author/Series/Title`.
 
 It **uses hard links**, not copies. This means it takes up **no additional disk space**, and **it will not interfere with torrent seeding** (does not modify or restructure the original torrent files)
 
@@ -257,20 +264,10 @@ These can be enabled independently of each other:
 
 1.  When `AUTO_ORGANIZE_ON_ADD` is enabled and you add a torrent, MouseSearch calculates its infohash and saves the Author/Title metadata from Myanonamouse to `./data/database.json`.
 2.  When `AUTO_ORGANIZE_ON_SCHEDULE` is enabled, the app includes a scheduler that runs at the configured interval (default: every hour, configurable via `AUTO_ORGANIZE_INTERVAL_HOURS`) to check for unorganized files.
-3.  Both methods check `database.json` for any torrents marked as `organized: false`.
-4.  For each unorganized torrent, it:
-    a.  Asks your torrent client for its file path (e.g., `/downloads/torrents/Some.Book.by.Some.Author`).
-    b.  Sanitizes the Author ("Some Author") and Title ("Some Book") using metadata from Myanonamouse.
-    c.  Creates the destination path: `/downloads/organized/Some Author/Some Book`.
-    d.  Scans the source directory for all files and hard-links each one to the destination, maintaining the original torrent folder structure
-    e.  Marks the torrent as `organized: true` in `database.json` (to prevent re-organizing later)
+3.  Both methods check `database.json` for any torrents downloaded via MouseSearch that are currently unorganized.
+4.  For each unorganized torrent, MouseSearch talks with your torrent client to figure out where the torrent files currently are, then hardlinks them to your `organized` directory.
 
-### Path Customization & Series Support:
-When adding a torrent with `AUTO_ORGANIZE_ON_ADD` enabled, MouseSearch will present a confirmation window.
-
-- **Review Path**: You can modify the calculated Author/Title path manually before sending it to the client.
-
-- **Series Toggle**: If the book is part of a series, a "Series" button will appear. Clicking this automatically injects the series name into the path (e.g., Author/Series/Title).
+> **Note:** currently MouseSearch only organizes torrents that have been downloaded using MouseSearch **after** this feature has been enabled. May in the future make this more flexible.
 
 ### Critical Setup Requirement
 
@@ -306,16 +303,18 @@ This setup guarantees that both paths point to the same underlying device, allow
 
 Planned features and enhancements for future releases:
 
-### Enhanced Organization
-- **LLM-Powered Auto-Organization**: Leverage large language models to intelligently organize media with improved accuracy for:
+#### Enhanced Organization
+- [ ] **LLM-Powered Auto-Organization**: Leverage large language models to intelligently organize media with improved accuracy for:
   - Better author/title extraction and normalization
   - Series detection and ordering
   - Handling edge cases and non-standard naming conventions
   - Smart metadata enrichment
+- [ ] **Organize Existing Library**: MouseSearch currently only organizes new books added via MouseSearch. May expand this to existing books later.
 
-### Torrent Client Support
-- **Transmission** support
-- **Deluge** support  
-- **rTorrent** support
+#### Torrent Client Support
+- [x] **qBittorrent** support
+- [ ] **Transmission** support
+- [ ] **Deluge** support  
+- [ ] **rTorrent** support
 
 **Have a feature request?** Open an issue on [GitHub](https://github.com/sevenlayercookie/MouseSearch/issues) to suggest new features
