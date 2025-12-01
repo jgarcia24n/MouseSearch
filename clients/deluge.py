@@ -155,32 +155,55 @@ class DelugeClient(TorrentClient):
     async def add_torrent(self, torrent_url: str, category: str, is_auto_organize: bool = False, **kwargs) -> dict:
         try:
             # Deluge options dict
-            # FIX: Do NOT set "download_location": None. 
-            # We omit the key entirely so Deluge uses its server-side default path.
+            # We do NOT add 'label' here, because the plugin ignores it in this dict.
             options = {
                 "add_paused": False,
             }
 
-            # 1. Handle Category via Label Plugin
-            if category:
-                options['label'] = category
-
-            # 2. Handle MID (Metadata ID) -> Store in Comment field
+            # Handle MID (Metadata ID) -> Store in Comment field
             if kwargs.get('mid'):
                 mid_val = kwargs['mid']
                 options['comment'] = f"MID={mid_val}"
 
-            # Add via URL
-            # Returns the Torrent Hash on success (or None)
+            # 1. Add Torrent
             torrent_hash = await self._request("core.add_torrent_url", [torrent_url, options])
             
             if torrent_hash:
+                # 2. Set Category (Label) Explicitly
+                if category:
+                    await self._set_category(torrent_hash, category)
+
                 return {'status': 'success', 'message': 'Torrent added successfully'}
             else:
                 return {'status': 'error', 'message': 'Deluge failed to add torrent (Invalid URL or Magnet)'}
 
         except Exception as e:
             return {'status': 'error', 'message': f'Failed to add torrent: {e}'}
+
+    async def _set_category(self, torrent_hash: str, category: str):
+        """
+        Helper to safely set the label. 
+        It checks if the label exists first, creates it if missing, then applies it.
+        """
+        try:
+            # Check enabled plugins to ensure Label plugin is running
+            plugins = await self._request("core.get_enabled_plugins")
+            if "Label" not in plugins:
+                return # Plugin disabled, cannot set label
+
+            # Get existing labels
+            existing_labels = await self._request("label.get_labels")
+            
+            # Create label if it doesn't exist
+            if category not in existing_labels:
+                await self._request("label.add", [category])
+            
+            # Apply label to torrent
+            await self._request("label.set_torrent", [torrent_hash, category])
+        except Exception:
+            # We swallow errors here so we don't report the whole add_torrent as failed 
+            # just because the label couldn't be set.
+            pass
 
     async def get_torrent_info(self, hash_val: str) -> dict:
         keys = ["name", "save_path", "total_size", "progress", "eta", "state", "label", "comment"]
