@@ -1,11 +1,13 @@
 # clients/__init__.py
 from .qbittorrent import QBittorrentClient
-from .transmission import TransmissionClient # NEW
+from .transmission import TransmissionClient
+from .rtorrent import RTorrentClient # NEW
 
 # Registry mapping config strings to Client Classes
 CLIENT_MAP = {
     "qbittorrent": QBittorrentClient,
-    "transmission": TransmissionClient, # NEW
+    "transmission": TransmissionClient,
+    "rtorrent": RTorrentClient, # NEW
 }
 
 def get_torrent_client(config):

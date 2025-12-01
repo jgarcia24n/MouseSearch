@@ -1057,7 +1057,7 @@ async def client_add_torrent():
         app.logger.info(f"MID {id} detected - adding torrent without hash calculation")
         
         # Add torrent immediately
-        result = await torrent_client.add_torrent(torrent_url, category)
+        result = await torrent_client.add_torrent(torrent_url, category, mid=id)
         
         if result['status'] == 'success':
             # Extract additional metadata from incoming_data
