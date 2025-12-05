@@ -224,3 +224,20 @@ input:disabled, select:disabled {
     background-color: rgba(var(--bs-body-bg-rgb), 0.8); 
     backdrop-filter: blur(2px);
 }
+
+/* --- Modal Stacking Fix --- */
+/* Since Book Details is fullscreen, we must ensure these specific "Action" modals 
+   have a higher z-index so they appear on top of it, regardless of HTML order.
+   Bootstrap default modal z-index is 1055. We set these to 1060.
+*/
+#downloadConfirmModal,
+#insufficientBufferModal,
+#uploadPurchaseModal,
+#vipPurchaseModal {
+    z-index: 1060; 
+}
+
+/* Ensure the second backdrop also stacks correctly if Bootstrap adds it */
+.modal-backdrop.show:nth-of-type(2) {
+    z-index: 1056; /* Higher than first modal (1055), lower than second modal (1060) */
+}
