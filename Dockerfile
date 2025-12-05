@@ -18,7 +18,6 @@ COPY app.py ./
 COPY static ./static
 COPY templates ./templates
 COPY clients ./clients
-COPY modals ./modals
 
 # remove this if becomes obsolete
 COPY hashing.py ./
