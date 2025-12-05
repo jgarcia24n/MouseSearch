@@ -124,41 +124,51 @@ input:disabled, select:disabled {
       -webkit-user-select: none;
     }
 
-    /* --- Audible Style Book Details --- */
+/* --- Audible Style Book Details --- */
 
 .book-hero-container {
-    background-color: #1a1a1a;
+    background-color: #000; /* Fallback */
     min-height: 400px;
-    box-shadow: inset 0 -50px 50px -20px #212529; /* Fade into body */
+    /* Box shadow creates the fade into the bottom content, respecting theme via rgba */
+    box-shadow: inset 0 -50px 50px -20px rgba(0,0,0,0.8);
 }
 
-/* Dynamically colored background based on cover (set via JS or generic gradient) */
 .book-hero-bg {
     background: linear-gradient(135deg, #2b3035 0%, #4a192c 100%);
     filter: blur(60px);
     opacity: 0.6;
-    transform: scale(1.2); /* Prevent white edges from blur */
+    transform: scale(1.2);
 }
 
 .book-hero-overlay {
-    background: linear-gradient(to bottom, rgba(0,0,0,0.2) 0%, rgba(33,37,41,1) 100%);
+    /* Dark gradient overlay to ensure white text is readable */
+    background: linear-gradient(to bottom, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.9) 100%);
 }
 
-.book-cover-lg {
+/* --- Cover Art Aspect Ratio Control --- */
+.book-cover-wrapper {
+    max-width: 300px; /* Limit width on large screens */
+    margin: 0 auto;   /* Center on mobile */
+    line-height: 0;   /* Remove bottom spacing for images */
+    background-color: #212529; /* Placeholder color while loading */
+}
+
+.book-cover-img {
     width: 100%;
-    max-width: 300px;
+    height: auto;
+    display: block;
     border-radius: 8px;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    object-fit: cover; /* Ensures it fills width without distortion */
 }
 
-/* Custom Scrollbar for the modal */
+/* Custom Scrollbar for Modal */
 .custom-scrollbar::-webkit-scrollbar {
     width: 8px;
 }
 .custom-scrollbar::-webkit-scrollbar-track {
-    background: #212529;
+    background: transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-    background-color: #555;
+    background-color: rgba(128, 128, 128, 0.5);
     border-radius: 4px;
 }

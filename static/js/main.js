@@ -26,6 +26,22 @@ window.toggleCardSwitch = function (checkboxId) {
     if (checkbox) checkbox.click();
 };
 
+// 1. Language Helper (Simplified)
+// We initialize with 'en' so the resulting names are in English (e.g. outputs "German" instead of "Deutsch")
+// const languageNames = new Intl.DisplayNames(['en'], { type: 'language' });
+const languageNames = new Intl.DisplayNames(undefined, { type: 'language' });
+
+function getLanguageName(code) {
+    if (!code) return "Unknown";
+    try {
+        // Intl handles 3-letter codes (ISO 639-2) like 'ENG', 'SPA' natively (case-insensitive)
+        return languageNames.of(code);
+    } catch (e) {
+        // Fallback to the code itself if Intl throws an error (e.g. invalid format)
+        return code;
+    }
+}
+
 // Helper to parse MAM specific JSON strings (e.g. "{\"91\":\"Douglas Adams\"}")
 function parseMamJson(jsonStr) {
     if (!jsonStr) return null;
@@ -967,7 +983,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
         // Populate Metadata Sidebar
         document.getElementById('detail-category').innerHTML = data.catname;
-        document.getElementById('detail-language').textContent = data.lang_code || "ENG";
+        document.getElementById('detail-language').textContent = getLanguageName(data.lang_code);
         document.getElementById('detail-filetype').textContent = data.filetype;
         document.getElementById('detail-size').textContent = data.size;
         document.getElementById('detail-added').textContent = data.added.split(' ')[0]; // Just date, no time
