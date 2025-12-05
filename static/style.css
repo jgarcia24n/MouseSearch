@@ -136,11 +136,27 @@ input:disabled, select:disabled {
 }
 
 .book-hero-bg {
-    /* Generated via JS, but base styles here */
-    background-color: #000;
-    filter: blur(60px);
-    opacity: 0.7; /* Increased opacity slightly for better color */
+    /* Position matches the container */
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+
+    /* Image handling */
+    background-repeat: no-repeat;
+    background-position: center center;
+    background-size: cover;
+
+    /* The Blur Effect */
+    -webkit-filter: blur(50px);
+    filter: blur(50px);
+    
+    /* Scale up to hide the white/faded edges caused by the blur */
     transform: scale(1.2);
+    
+    /* opacity: 0.5 ensures it doesn't overpower the text */
+    opacity: 0.5; 
 }
 
 .book-hero-overlay {

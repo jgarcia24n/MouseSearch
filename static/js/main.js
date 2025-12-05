@@ -1076,7 +1076,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
         // Populate Text
         document.getElementById('detail-title').innerHTML = data.title;
-        document.getElementById('detail-subtitle').innerHTML = series ? `<span class="badge bg-secondary opacity-50">Series</span> ${series}` : '';
+        document.getElementById('detail-subtitle').innerHTML = series ? `<span class="badge bg-secondary opacity-75">Series</span> ${series}` : '';
         document.getElementById('detail-authors').textContent = authors;
         document.getElementById('detail-narrators').textContent = narrators;
         document.getElementById('detail-description').innerHTML = data.description || "No description available.";
@@ -1084,16 +1084,10 @@ document.addEventListener("DOMContentLoaded", function () {
         // Populate Image
         document.getElementById('detail-cover').src = coverSrc;
 
-        // Dynamic Hero Background (Random hue for variety)
-        const hue = Math.floor(Math.random() * 360);
-        document.getElementById('detail-hero-bg').style.background = `
-            linear-gradient(
-                135deg, 
-                hsl(${hue}, 50%, 20%) 0%, 
-                hsl(${hue}, 50%, 15%) 50%, 
-                transparent 100%
-            )
-        `;
+        // --- UPDATED: Dynamic Hero Background (Blurred Image) ---
+        // Instead of a random color, we set the background to the cover image.
+        // The CSS (.book-hero-bg) handles the blurring and scaling.
+        document.getElementById('detail-hero-bg').style.backgroundImage = `url('${coverSrc}')`;
 
         // Populate Metadata Sidebar
         document.getElementById('detail-category').innerHTML = data.catname;
