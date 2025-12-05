@@ -3,7 +3,7 @@
 </div>
 
 # MouseSearch
-MouseSearch is a self-hosted web application that provides a clean, fast search interface for MyAnonamouse (MAM). It connects directly to the MAM API for searching and supports modular torrent client integrations (currently qBittorrent) for one-click downloading, bridging the gap between your favorite tracker and your download client.
+MouseSearch is a self-hosted web application that provides a clean, fast search interface for MyAnonamouse (MAM). It connects directly to the MAM API for searching and supports modular torrent client integrations (qBittorrent, Deluge, Transmission, rTorrent) for one-click downloading, bridging the gap between your favorite tracker and your download client.
 
 
 
@@ -11,7 +11,7 @@ MouseSearch is a self-hosted web application that provides a clean, fast search 
 
 * **MAM Search:** Full-text search for torrents on MyAnonamouse.
 * **Advanced Filtering:** Filter by title, author, narrator, media type, language, and advanced tracker filters (e.g., Freeleech, VIP, Active).
-* **One-Click Downloading:** Send torrents directly to your torrent client (currently supports qBittorrent), assigning a category from the UI.
+* **One-Click Downloading:** Send torrents directly to your torrent client (supports qBittorrent, Deluge, Transmission, and rTorrent), assigning a category from the UI.
 * **Live Status Dashboards:**
     * View your MAM user stats (username, ratio, bonus points, etc.) directly in the app.
     * Check the connection status to both MAM and your torrent client.
@@ -30,7 +30,7 @@ MouseSearch is a self-hosted web application that provides a clean, fast search 
 * **Backend:** **Quart**
 * **Frontend:** **Bootstrap 5** & JavaScript
 * **Containerization:** **Docker**
-* **APIs:** MyAnonamouse (MAM) & Modular Torrent Clients (qBittorrent)
+* **APIs:** MyAnonamouse (MAM) & Modular Torrent Clients
 
 ## Progressive Web App (PWA) Support
 
@@ -139,11 +139,11 @@ Open the `.env` file and configure the following settings.
 
 ### Torrent Client Configuration
 
-MouseSearch supports modular torrent clients. Currently supported: **qBittorrent**. Transmission and other clients coming soon.
+MouseSearch supports modular torrent clients. Currently supported: **qBittorrent**, **Deluge**, **Transmission**, and **rTorrent**.
 
 | Variable | Required | Description |
 | :--- | :--- | :--- |
-| `TORRENT_CLIENT_TYPE` | No | The type of torrent client (default: `qbittorrent`). Future options: `transmission`, `deluge`. |
+| `TORRENT_CLIENT_TYPE` | No | The type of torrent client (default: `qbittorrent`). Options: `qbittorrent`, `deluge`, `transmission`, `rtorrent`. |
 | `TORRENT_CLIENT_URL` | **Yes** | The full URL to your torrent client WebUI (e.g., `http://192.168.1.10:8080` or `http://qbittorrent:6767` if on the same Docker network). |
 | `TORRENT_CLIENT_USERNAME` | **Yes** | Your torrent client username. |
 | `TORRENT_CLIENT_PASSWORD` | **Yes** | Your torrent client password. |
@@ -277,9 +277,7 @@ These can be enabled independently of each other:
 For hard links to work, your source (`TORRENT_DOWNLOAD_PATH`) and destination (`ORGANIZED_PATH`) directories **must**:
 1. exist on the same filesystem
 
-    **AND** 
-
-2. within the same volume mount (if using Docker)
+    **AND** 2. within the same volume mount (if using Docker)
 
 The easiest way to ensure this is to have a single parent directory (e.g., `/mnt/storage/downloads`) on your host machine that contains *both* your torrents and your organized media. You then pass this single parent directory as a volume in your `compose.yaml`, as shown in the example.
 
@@ -316,8 +314,8 @@ Planned features and enhancements for future releases:
 
 #### Torrent Client Support
 - [x] **qBittorrent** support
-- [ ] **Transmission** support
-- [ ] **Deluge** support  
-- [ ] **rTorrent** support
+- [x] **Transmission** support
+- [x] **Deluge** support  
+- [x] **rTorrent** support
 
 **Have a feature request?** Open an issue on [GitHub](https://github.com/sevenlayercookie/MouseSearch/issues) to suggest new features
