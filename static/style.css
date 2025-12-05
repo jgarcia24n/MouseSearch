@@ -127,22 +127,34 @@ input:disabled, select:disabled {
 /* --- Audible Style Book Details --- */
 
 .book-hero-container {
-    background-color: #000; /* Fallback */
+    background-color: var(--bs-body-bg); /* Fallback to match theme */
     min-height: 400px;
-    /* Box shadow creates the fade into the bottom content, respecting theme via rgba */
-    box-shadow: inset 0 -50px 50px -20px rgba(0,0,0,0.8);
+    /* Remove the box-shadow, the overlay handles the blend now */
+    box-shadow: none; 
+    /* Ensure text pops even if gradient blends to white in light mode */
+    text-shadow: 0 2px 4px rgba(0,0,0,0.8); 
 }
 
 .book-hero-bg {
-    background: linear-gradient(135deg, #2b3035 0%, #4a192c 100%);
+    /* Generated via JS, but base styles here */
+    background-color: #000;
     filter: blur(60px);
-    opacity: 0.6;
+    opacity: 0.7; /* Increased opacity slightly for better color */
     transform: scale(1.2);
 }
 
 .book-hero-overlay {
-    /* Dark gradient overlay to ensure white text is readable */
-    background: linear-gradient(to bottom, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.9) 100%);
+    /* The Magic Gradient:
+       0% (Top): Dark tint (0,0,0, 0.4) to ensure white text is readable against bright album art.
+       100% (Bottom): The exact color of the web page body (--bs-body-bg-rgb)
+    */
+    background: linear-gradient(
+        to bottom,
+        rgba(0, 0, 0, 0.4) 0%, 
+        rgba(var(--bs-body-bg-rgb), 0.0) 50%, 
+        rgba(var(--bs-body-bg-rgb), 0.8) 85%,
+        rgba(var(--bs-body-bg-rgb), 1) 100%
+    );
 }
 
 /* --- Cover Art Aspect Ratio Control --- */
@@ -171,4 +183,28 @@ input:disabled, select:disabled {
 .custom-scrollbar::-webkit-scrollbar-thumb {
     background-color: rgba(128, 128, 128, 0.5);
     border-radius: 4px;
+}
+
+/* --- Adaptive Button (Dark in Light Mode, Light in Dark Mode) --- */
+.btn-outline-adaptive {
+    text-shadow: none !important;
+    --bs-btn-bg: var(--bd-violet-bg);
+    --bs-btn-color: var(--bs-body-color);
+    --bs-btn-border-color: var(--bs-body-color);
+    
+    /* Hover State: Invert colors (Bg becomes Text Color, Text becomes Bg Color) */
+    --bs-btn-hover-bg: var(--bs-body-color);
+    --bs-btn-hover-color: var(--bs-body-bg);
+    --bs-btn-hover-border-color: var(--bs-body-color);
+    
+    /* Active/Focus States */
+    --bs-btn-focus-shadow-rgb: var(--bs-body-color-rgb);
+    --bs-btn-active-color: var(--bs-body-bg);
+    --bs-btn-active-bg: var(--bs-body-color);
+    --bs-btn-active-border-color: var(--bs-body-color);
+    
+    /* Optional: Add a slight semi-transparent background to ensure readability 
+       if the button sits exactly on the transition line of the gradient */
+    background-color: rgba(var(--bs-body-bg-rgb), 0.8); 
+    backdrop-filter: blur(2px);
 }

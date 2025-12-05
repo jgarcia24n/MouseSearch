@@ -975,9 +975,18 @@ document.addEventListener("DOMContentLoaded", function () {
         const coverImg = document.getElementById('detail-cover');
         coverImg.src = originElement.querySelector('img')?.src || '/static/icons/no_cover.png';
 
-        // Dynamic Hero Background (Random hue for visual variety)
+        // Dynamic Hero Background
+        // Use a darker luminosity (20%) so white text looks good, 
+        // but let it fade to transparent so the CSS Overlay controls the bottom edge.
         const hue = Math.floor(Math.random() * 360);
-        document.getElementById('detail-hero-bg').style.background = `linear-gradient(135deg, hsl(${hue}, 40%, 20%) 0%, #000 100%)`;
+        document.getElementById('detail-hero-bg').style.background = `
+            linear-gradient(
+                135deg, 
+                hsl(${hue}, 50%, 20%) 0%, 
+                hsl(${hue}, 50%, 15%) 50%, 
+                transparent 100%
+            )
+        `;
 
         // Populate Metadata Sidebar
         document.getElementById('detail-category').innerHTML = data.catname;
@@ -992,14 +1001,21 @@ document.addEventListener("DOMContentLoaded", function () {
         document.getElementById('detail-seeders').textContent = data.seeders;
         document.getElementById('detail-leechers').textContent = data.leechers;
 
-        // Populate Tags (Theming updated in HTML)
+        // Populate Tags
         const tagsContainer = document.getElementById('detail-tags');
         tagsContainer.innerHTML = '';
         if(data.tags) {
             data.tags.split(',').forEach(tag => {
+                if (!tag.trim()) return; // Skip empty tags
+                
                 const badge = document.createElement('span');
-                // Adaptive badge styling
-                badge.className = 'badge bg-body-secondary text-body-emphasis border border-secondary-subtle fw-normal';
+                
+                // ADDED CLASSES: 
+                // text-wrap: Allows long text to wrap to the next line
+                // text-start: Aligns text to left (looks better for multi-line badges)
+                // lh-base: Fixes line height (badges usually have tight line height)
+                badge.className = 'badge bg-body-secondary text-body-emphasis border border-secondary-subtle fw-normal text-wrap text-start lh-base';
+                
                 badge.textContent = tag.trim();
                 tagsContainer.appendChild(badge);
             });
