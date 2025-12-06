@@ -49,6 +49,9 @@ function handleBookCoverError(imgElement) {
     }
 }
 
+// Explicitly attach to window to ensure global access
+window.handleBookCoverError = handleBookCoverError;
+
 // 1. Language Helper (Simplified)
 // We initialize with 'en' so the resulting names are in English (e.g. outputs "German" instead of "Deutsch")
 // const languageNames = new Intl.DisplayNames(['en'], { type: 'language' });
@@ -812,6 +815,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (searchForm) {
         searchForm.addEventListener("submit", function (e) {
             e.preventDefault();
+            document.getElementById('query').blur();
             const formData = new FormData(searchForm);
             const queryParams = new URLSearchParams(formData);
             const queryString = queryParams.toString();
@@ -1203,6 +1207,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     function performDownload(downloadData, button) {
         if (button) button.disabled = true;
+        
         fetch('/client/add', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1210,44 +1215,69 @@ document.addEventListener("DOMContentLoaded", function () {
         })
             .then(response => response.json())
             .then(async data => {
+                // 1. Handle Insufficient Buffer
                 if (data.status === 'insufficient_buffer') {
+                    // ... (Population of buffer modal fields) ...
                     document.getElementById('modal-buffer-gb').textContent = data.buffer_gb || 0;
                     document.getElementById('modal-torrent-size').textContent = data.torrent_size_gb || 0;
                     document.getElementById('modal-needed-gb').textContent = data.needed_gb || 0;
                     document.getElementById('modal-recommended-amount').textContent = data.recommended_amount || 0;
                     document.getElementById('modal-recommended-cost').textContent = (data.recommended_cost || 0).toLocaleString();
                     const buyBtn = document.getElementById('modal-buy-recommended');
-                    buyBtn.dataset.amount = data.recommended_amount || 0;
+                    if(buyBtn) buyBtn.dataset.amount = data.recommended_amount || 0;
+                    
                     window.pendingDownload = downloadData;
                     new bootstrap.Modal(document.getElementById('insufficientBufferModal')).show();
+                    
                     if (button) button.disabled = false;
                     return;
                 }
-                showToast(data.message || data.error, data.message ? 'success' : 'danger');
-                if (data.message && button) {
-                    button.textContent = 'Added!';
-                    const resultItem = button.closest('.result-item');
-                    const statusContainer = resultItem.querySelector('.torrent-status-container');
-                    if (statusContainer) statusContainer.innerHTML = `<span class="badge bg-info text-wrap">Resolving torrent...</span>`;
 
-                    let attempts = 0;
-                    const pollInterval = setInterval(async () => {
-                        attempts++;
-                        const hash = await getTorrentHashByMID(downloadData.id);
-                        if (hash) {
-                            clearInterval(pollInterval);
-                            pollTorrentStatus(hash, resultItem);
-                            fetchAndUpdateTorrentStatus(hash, resultItem);
-                        } else if (attempts >= 15) {
-                            clearInterval(pollInterval);
-                            if (statusContainer) statusContainer.innerHTML = `<span class="badge bg-warning">Added (pending)</span>`;
-                        }
-                    }, 2000);
+                // 2. Show Server Message
+                showToast(data.message || data.error, data.message ? 'success' : 'danger');
+
+                // 3. Update UI on Success
+                if (data.message) {
+                    if (button) button.textContent = 'Added!';
+
+                    // --- CRITICAL FIX START ---
+                    // Try to find the row relative to the button (List View click)
+                    let resultItem = button.closest ? button.closest('.result-item') : null;
+
+                    // If null (Modal View click), find the row by ID in the main list
+                    if (!resultItem && downloadData.id) {
+                        resultItem = document.querySelector(`.result-item[data-torrent-id="${downloadData.id}"]`);
+                    }
+                    // --- CRITICAL FIX END ---
+
+                    // Only proceed with UI updates if the result row actually exists
+                    if (resultItem) {
+                        const statusContainer = resultItem.querySelector('.torrent-status-container');
+                        if (statusContainer) statusContainer.innerHTML = `<span class="badge bg-info text-wrap">Resolving torrent...</span>`;
+
+                        // Start Polling for Hash
+                        let attempts = 0;
+                        const pollInterval = setInterval(async () => {
+                            attempts++;
+                            const hash = await getTorrentHashByMID(downloadData.id);
+                            
+                            if (hash) {
+                                clearInterval(pollInterval);
+                                pollTorrentStatus(hash, resultItem);
+                                fetchAndUpdateTorrentStatus(hash, resultItem);
+                            } else if (attempts >= 15) {
+                                clearInterval(pollInterval);
+                                if (statusContainer) statusContainer.innerHTML = `<span class="badge bg-warning">Added (pending)</span>`;
+                            }
+                        }, 2000);
+                    }
                 } else if (button) {
+                    // If message is missing (error state), re-enable button
                     button.disabled = false;
                 }
             })
             .catch(error => {
+                console.error("Download Logic Error:", error); 
                 showToast("Error adding torrent.", 'danger');
                 if (button) button.disabled = false;
             });
