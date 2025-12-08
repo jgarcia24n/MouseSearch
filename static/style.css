@@ -329,3 +329,14 @@ input:disabled, select:disabled {
 #settingsOffcanvas {
     z-index: 1070;
 }
+
+/* Custom class to apply rounding ONLY on small (sm) screens and up */
+.rounded-sm {
+  /* Targets screens with a viewport width of 576px or greater */
+  /* This is the standard Bootstrap 'sm' breakpoint */
+  @media (min-width: 576px) {
+    /* Apply a standard level of border-radius. 
+       We'll use '0.5rem' to match Bootstrap's 'rounded-3' size. */
+    border-radius: 0.5rem !important;
+  }
+}
