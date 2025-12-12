@@ -292,10 +292,7 @@ async function getTorrentHashByMID(torrentId) {
 }
 
 function updateTorrentUI(hash, data, resultItem) {
-    // 1. Find ALL containers (Desktop & Mobile)
-    const statusContainers = resultItem.querySelectorAll('.torrent-status-container');
-    if (!statusContainers.length) return;
-
+    // 1. Generate the HTML (Same logic as before)
     const state = data.state || 'unknown';
     const progressPercent = Math.floor((data.progress || 0) * 100);
     const etaSeconds = data.eta || 0;
@@ -332,23 +329,51 @@ function updateTorrentUI(hash, data, resultItem) {
         htmlContent = `<div class="badge bg-secondary">State: ${state}</div>`;
     }
 
-    // 2. Loop through and update BOTH containers
-    statusContainers.forEach(container => {
-        container.innerHTML = htmlContent;
-    });
+    // 2. Update the Search Result Row (Desktop & Mobile)
+    if (resultItem) {
+        const rowContainers = resultItem.querySelectorAll('.torrent-status-container');
+        rowContainers.forEach(container => {
+            container.innerHTML = htmlContent;
+        });
+    }
+
+    // 3. [NEW] Update the Modal Footer if it's open and matches this book
+    const modalBtn = document.getElementById('detail-download-btn');
+    const modalContainer = document.querySelector('#details-footer .torrent-status-container');
+
+    // We check if the modal is actually open (visible) to avoid errors
+    const isModalOpen = document.getElementById('bookDetailsModal').classList.contains('show');
+
+    if (isModalOpen && modalBtn && modalContainer && resultItem) {
+        // Compare the ID stored in the result row with the ID stored in the modal button
+        if (resultItem.dataset.torrentId === modalBtn.dataset.id) {
+            modalContainer.innerHTML = htmlContent;
+        }
+    }
 }
 
 function pollTorrentStatus(hash, resultItem) {
-    // 1. Find ALL containers
-    const statusContainers = resultItem.querySelectorAll('.torrent-status-container');
-    if (!statusContainers.length) return;
-
     hashToElementMap.set(hash, resultItem);
 
-    // 2. Loop through and set the "Waiting" message on BOTH
-    statusContainers.forEach(container => {
-        container.innerHTML = `<span class="badge bg-info text-wrap">Waiting for updates...</span>`;
-    });
+    const waitingHtml = `<span class="badge bg-info text-wrap">Waiting for updates...</span>`;
+
+    // 1. Update List Item Containers
+    if (resultItem) {
+        const statusContainers = resultItem.querySelectorAll('.torrent-status-container');
+        statusContainers.forEach(container => {
+            container.innerHTML = waitingHtml;
+        });
+    }
+
+    // 2. [NEW] Update Modal Container if match
+    const modalBtn = document.getElementById('detail-download-btn');
+    const modalContainer = document.querySelector('#details-footer .torrent-status-container');
+
+    if (modalBtn && modalContainer && resultItem) {
+        if (resultItem.dataset.torrentId === modalBtn.dataset.id) {
+            modalContainer.innerHTML = waitingHtml;
+        }
+    }
 }
 
 function checkClientStatus() {
@@ -1318,6 +1343,26 @@ document.addEventListener("DOMContentLoaded", function () {
         });
 
         document.getElementById('detail-torrent-link').href = data.download_link;
+
+        // ============================================================
+        // NEW: SYNC PROGRESS BAR ON OPEN
+        // ============================================================
+        const modalStatusContainer = document.querySelector('#details-footer .torrent-status-container');
+
+        // 1. Clear previous status (in case we opened a different book)
+        if (modalStatusContainer) modalStatusContainer.innerHTML = '';
+
+        // 2. Find the row in the background list
+        const backgroundRow = document.querySelector(`.result-item[data-torrent-id="${data.id}"]`);
+
+        if (backgroundRow) {
+            const rowStatus = backgroundRow.querySelector('.torrent-status-container');
+
+            // 3. If the row has a progress bar or badge, copy it to the modal immediately
+            if (rowStatus && rowStatus.innerHTML.trim() !== "") {
+                modalStatusContainer.innerHTML = rowStatus.innerHTML;
+            }
+        }
     }
 
     // Confirm Download Modal Action
@@ -1365,7 +1410,6 @@ document.addEventListener("DOMContentLoaded", function () {
             .then(async data => {
                 // 1. Handle Insufficient Buffer
                 if (data.status === 'insufficient_buffer') {
-                    // ... (Population of buffer modal fields) ...
                     document.getElementById('modal-buffer-gb').textContent = data.buffer_gb || 0;
                     document.getElementById('modal-torrent-size').textContent = data.torrent_size_gb || 0;
                     document.getElementById('modal-needed-gb').textContent = data.needed_gb || 0;
@@ -1389,41 +1433,52 @@ document.addEventListener("DOMContentLoaded", function () {
                     if (button) button.textContent = 'Added!';
 
                     // Find the row
-                    let resultItem = button.closest ? button.closest('.result-item') : null;
+                    let resultItem = button && button.closest ? button.closest('.result-item') : null;
                     if (!resultItem && downloadData.id) {
                         resultItem = document.querySelector(`.result-item[data-torrent-id="${downloadData.id}"]`);
                     }
 
+                    const resolvingHtml = `<span class="badge bg-info text-wrap">Resolving torrent...</span>`;
+
+                    // Update List Item
                     if (resultItem) {
-                        // FIX: Select ALL status containers (Desktop & Mobile)
-                        const statusContainers = resultItem.querySelectorAll('.torrent-status-container');
-
-                        // FIX: Loop through them to update both
-                        statusContainers.forEach(el => {
-                            el.innerHTML = `<span class="badge bg-info text-wrap">Resolving torrent...</span>`;
+                        resultItem.querySelectorAll('.torrent-status-container').forEach(el => {
+                            el.innerHTML = resolvingHtml;
                         });
-
-                        // Start Polling
-                        let attempts = 0;
-                        const pollInterval = setInterval(async () => {
-                            attempts++;
-                            const hash = await getTorrentHashByMID(downloadData.id);
-
-                            if (hash) {
-                                clearInterval(pollInterval);
-                                pollTorrentStatus(hash, resultItem);
-                                fetchAndUpdateTorrentStatus(hash, resultItem);
-                            } else if (attempts >= 15) {
-                                clearInterval(pollInterval);
-                                // Update all containers again
-                                statusContainers.forEach(el => {
-                                    el.innerHTML = `<span class="badge bg-warning">Added (pending)</span>`;
-                                });
-                            }
-                        }, 2000);
                     }
+
+                    // [NEW] Update Modal Footer immediately
+                    const modalBtn = document.getElementById('detail-download-btn');
+                    const modalContainer = document.querySelector('#details-footer .torrent-status-container');
+                    // Check if the download we just started matches the open modal
+                    if (modalBtn && modalContainer && String(modalBtn.dataset.id) === String(downloadData.id)) {
+                        modalContainer.innerHTML = resolvingHtml;
+                    }
+
+                    // Start Polling
+                    let attempts = 0;
+                    const pollInterval = setInterval(async () => {
+                        attempts++;
+                        const hash = await getTorrentHashByMID(downloadData.id);
+
+                        if (hash) {
+                            clearInterval(pollInterval);
+                            pollTorrentStatus(hash, resultItem);
+                            fetchAndUpdateTorrentStatus(hash, resultItem);
+                        } else if (attempts >= 15) {
+                            clearInterval(pollInterval);
+                            const pendingHtml = `<span class="badge bg-warning">Added (pending)</span>`;
+
+                            if (resultItem) {
+                                resultItem.querySelectorAll('.torrent-status-container').forEach(el => el.innerHTML = pendingHtml);
+                            }
+                            if (modalBtn && modalContainer && String(modalBtn.dataset.id) === String(downloadData.id)) {
+                                modalContainer.innerHTML = pendingHtml;
+                            }
+                        }
+                    }, 2000);
+
                 } else if (button) {
-                    // If message is missing (error state), re-enable button
                     button.disabled = false;
                 }
             })
