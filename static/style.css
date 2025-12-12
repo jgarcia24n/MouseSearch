@@ -498,3 +498,18 @@ input:disabled, select:disabled {
 [data-bs-theme="dark"] .autosuggest-results .list-group-item:hover {
     background-color: var(--bs-tertiary-bg);
 }
+
+/* Update/Add to Autosuggest Styles */
+.autosuggest-results .list-group-item {
+    transition: background-color 0.15s ease-in-out;
+}
+
+/* Ensure the flexbox works nicely with the badge */
+.autosuggest-results .list-group-item .flex-grow-1 {
+    min-width: 0; /* Allows text truncation to work inside flex child */
+}
+
+/* Make sure image doesn't shrink */
+.autosuggest-results img {
+    flex-shrink: 0;
+}

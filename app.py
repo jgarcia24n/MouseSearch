@@ -14,6 +14,8 @@ from dotenv import load_dotenv
 from httpx import Limits, Timeout, AsyncHTTPTransport
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from urllib.parse import quote
+
 import re
 from pathlib import Path
 
@@ -74,8 +76,8 @@ class LeakyBucket:
             wait_time = (1 - self.tokens) * (self.period / self.limit)
             return wait_time
 
-# Initialize Limiter: 120 requests per 60 seconds
-audible_limiter = LeakyBucket(120, 60.0)
+# 120 requests per 60 seconds (Shared limit)
+mam_autosuggest_limiter = LeakyBucket(120, 60.0)
 
 @app.before_serving
 async def startup():
@@ -746,75 +748,115 @@ async def push_mam_stats():
     app.logger.debug("[MAM-STATS] Successfully pushed MAM stats via SSE")
 
 # --- QUART ROUTES ---
-@app.route('/audible/autosuggest', methods=['GET'])
-async def audible_autosuggest():
-    query = request.args.get('q', '').strip()
-    if len(query) < 3:
+@app.route('/mam/autosuggest', methods=['GET'])
+async def mam_autosuggest():
+    # 1. Capture and clean input
+    raw_query = request.args.get('q', '').strip()
+    
+    # Basic length check on the raw input
+    if len(raw_query) < 3:
         return jsonify([])
 
-    # 1. Acquire Rate Limit Token
-    wait_or_success = await audible_limiter.acquire()
+    # 2. Enforce Rate Limit
+    wait_or_success = await mam_autosuggest_limiter.acquire()
     if wait_or_success is not True:
-        # If we are out of tokens, sleep for the required time (smoothing)
         await asyncio.sleep(wait_or_success)
 
-    # 2. Query Audible API
-    # We use 'keywords' to match Author OR Title OR Series
-    params = {
-        'keywords': query,
-        'num_results': 5,
-        'products_sort_by': 'Relevance',
-        'image_sizes': '500,252',
-        'response_groups': 'media,contributors,product_attrs,series'
-    }
+    # 3. Prepare MAM Request
+    if not mam_session_cookies.get("mam_id"):
+        return jsonify([])
+
+    url = f"{app.config['MAM_API_URL']}/tor/js/loadSearchJSONbasic.php"
     
-    url = "https://api.audible.com/1.0/catalog/products"
+    # --- UPDATED WILDCARD LOGIC ---
+    # Split query into words, strip existing * to prevent duplication, 
+    # then wrap EACH word in wildcards.
+    # Example: "dune mess" -> "*dune* *mess*"
+    words = raw_query.split()
+    wildcard_words = [f"*{w.strip('*')}*" for w in words if w.strip('*')]
+    
+    if not wildcard_words:
+        return jsonify([])
+        
+    wildcard_query = " ".join(wildcard_words)
+    # ------------------------------
+
+    # Construct parameters to match the main search filters
+    params = {
+        "tor[text]": wildcard_query,
+        "tor[sortType]": "seeders",
+        "perpage": 7,
+        "thumbnail": "true",
+        
+        # Dynamic Filters from URL params
+        "tor[browse_lang][]": language_dict.get(request.args.get("language", "English"), 1),
+        "tor[srchIn][title]": "on" if request.args.get("search_in_title") == "true" else "off",
+        "tor[srchIn][author]": "on" if request.args.get("search_in_author") == "true" else "off",
+        "tor[srchIn][narrator]": "on" if request.args.get("search_in_narrator") == "true" else "off",
+        "tor[srchIn][series]": "on" if request.args.get("search_in_series") == "true" else "off",
+        "tor[searchType]": "all"
+    }
+
+    # Apply Category Filter
+    media_type = request.args.get("media_type", "13")
+    if media_type != "all":
+        params["tor[main_cat][]"] = media_type
 
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(url, params=params, timeout=5.0)
+            resp = await client.get(url, params=params, cookies=mam_session_cookies, timeout=5.0)
+            update_cookies(resp)
             
             if resp.status_code != 200:
-                app.logger.error(f"Audible API Error: {resp.status_code} - {resp.text}")
                 return jsonify([])
 
             data = resp.json()
-            products = data.get('products', [])
+            raw_results = data.get('data', [])
             suggestions = []
 
-            for p in products:
-                # -- Extract Data --
-                title = p.get('title', 'Unknown')
-                
-                # Authors (List -> String)
-                authors = [a.get('name') for a in p.get('authors', [])]
-                author_str = ", ".join(authors) if authors else ""
+            for row in raw_results:
+                # -- Parse Author --
+                author_str = "Unknown"
+                try:
+                    if row.get('author_info'):
+                        auth_data = json.loads(row['author_info'])
+                        author_str = ", ".join(auth_data.values())
+                except:
+                    pass
 
-                # Series (Check if exists)
-                series_str = None
-                if 'series' in p and p['series']:
-                    # Grab the first series info
-                    s = p['series'][0]
-                    s_title = s.get('title')
-                    s_seq = s.get('sequence')
-                    if s_title:
-                        series_str = f"{s_title} #{s_seq}" if s_seq else s_title
+                # -- Parse Series --
+                series_str = ""
+                try:
+                    if row.get('series_info'):
+                        ser_data = json.loads(row['series_info'])
+                        if ser_data:
+                            first_series = next(iter(ser_data.values()))
+                            name = first_series[0]
+                            seq = first_series[1]
+                            series_str = f"{name} #{seq}" if seq else name
+                except:
+                    pass
 
-                # Thumbnail (Prefer 252, fallback to 500)
-                images = p.get('product_images', {})
-                thumb = images.get('252') or images.get('500') or ""
+                # -- Generate Proxied Thumbnail URL --
+                thumb = ""
+                tid = row.get('id')
+                if tid:
+                    upstream_url = f"https://cdn.myanonamouse.net/t/p/small/{tid}.webp"
+                    encoded_url = quote(upstream_url)
+                    thumb = f"/proxy_thumbnail?url={encoded_url}"
 
                 suggestions.append({
-                    'title': title,
+                    'title': row.get('title', 'Unknown'),
                     'author': author_str,
                     'series': series_str,
-                    'thumbnail': thumb
+                    'thumbnail': thumb,
+                    'seeders': row.get('seeders', 0)
                 })
 
             return jsonify(suggestions)
 
     except Exception as e:
-        app.logger.error(f"Autosuggest Exception: {e}")
+        app.logger.error(f"MAM Autosuggest Error: {e}")
         return jsonify([])
     
     

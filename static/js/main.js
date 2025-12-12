@@ -1515,13 +1515,13 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
     // --- D. Sticky Header Search Logic ---
-// Add this inside the document.addEventListener("DOMContentLoaded", function () { ... }) block
+    // Add this inside the document.addEventListener("DOMContentLoaded", function () { ... }) block
 
     const navElement = document.getElementById('main-navbar');
     const navSearchContainer = document.getElementById('nav-search-container');
     const navSearchInput = document.getElementById('nav-search-input');
     const navSearchForm = document.getElementById('nav-search-form');
-    
+
     // 1. Scroll Listener (Show/Hide)
     window.addEventListener('scroll', () => {
         if (!searchForm) return;
@@ -1555,7 +1555,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     mainInput.value = val;
                     // Trigger the main search button click to reuse all existing logic (filters, etc)
                     searchButton.click();
-                    
+
                     // Optional: Scroll slightly up so results aren't hidden behind the sticky header
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                 }
@@ -1565,7 +1565,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // 3. Optional: Sync typing (If you want the main box to update as you type in the header)
     if (navSearchInput) {
-        navSearchInput.addEventListener('input', function() {
+        navSearchInput.addEventListener('input', function () {
             const mainInput = document.getElementById('query');
             if (mainInput) mainInput.value = this.value;
         });
@@ -1601,7 +1601,24 @@ function initAutosuggest(inputId) {
         }
 
         try {
-            const res = await fetch(`/audible/autosuggest?q=${encodeURIComponent(val)}`);
+            // 1. Gather Filter Values from the DOM
+            // We look for the IDs used in your HTML templates
+            const getVal = (id) => document.getElementById(id)?.value || '';
+            const getCheck = (id) => document.getElementById(id)?.checked ? 'true' : 'false';
+
+            const params = new URLSearchParams({
+                q: val,
+                // Pass the filters exactly as the backend expects them
+                language: getVal('language') || 'English',
+                media_type: getVal('media_type') || '13',
+                search_in_title: getCheck('search_in_title'),
+                search_in_author: getCheck('search_in_author'),
+                search_in_narrator: getCheck('search_in_narrator'),
+                search_in_series: getCheck('search_in_series')
+            });
+
+            // 2. Fetch with dynamic filters
+            const res = await fetch(`/mam/autosuggest?${params.toString()}`);
             const data = await res.json();
 
             container.innerHTML = '';
@@ -1615,42 +1632,41 @@ function initAutosuggest(inputId) {
                 const a = document.createElement('a');
                 a.className = 'list-group-item list-group-item-action d-flex align-items-center gap-3 py-2';
                 a.href = '#';
-                
-                // Determine if we show the Series line
-                // Logic: Only show series if it exists
-                const seriesHtml = item.series 
-                    ? `<div class="text-xs text-body-secondary text-truncate"><i class="bi bi-collection me-1"></i>${item.series}</div>` 
+
+                const seriesHtml = item.series
+                    ? `<div class="text-xs text-body-secondary text-truncate"><i class="bi bi-collection me-1"></i>${item.series}</div>`
                     : '';
+
+                // NEW: Show seeder count (Tiny badge)
+                const seederHtml = `<span class="badge bg-secondary-subtle text-secondary-emphasis rounded-pill ms-auto" style="font-size: 0.65rem;">${item.seeders} <i class="bi bi-arrow-up-short"></i></span>`;
 
                 a.innerHTML = `
                     <img src="${item.thumbnail || '/static/icons/no_cover.png'}" 
                          class="rounded object-fit-cover" 
                          width="40" height="40" 
-                         alt="Cover">
-                    <div class="overflow-hidden w-100">
+                         alt="Cover"
+                         onerror="this.src='/static/icons/no_cover.png'">
+                    <div class="overflow-hidden flex-grow-1">
                         <div class="fw-bold text-truncate text-sm">${item.title}</div>
                         <div class="text-xs text-body-secondary text-truncate">${item.author}</div>
                         ${seriesHtml}
                     </div>
+                    ${seederHtml}
                 `;
 
-                // Click Handler: Populate input and submit
                 a.addEventListener('click', (e) => {
                     e.preventDefault();
-                    
-                    // 1. Populate the specific input user typed in
+
+                    // Populate input
                     input.value = `${item.title} ${item.author}`;
-                    
-                    // 2. Also sync the main #query input if user typed in nav bar
+
+                    // Sync main search if needed
                     const mainQuery = document.getElementById('query');
                     if (mainQuery && input.id !== 'query') {
                         mainQuery.value = input.value;
                     }
 
-                    // 3. Clear suggestions
                     container.style.display = 'none';
-
-                    // 4. Trigger the actual search button click
                     document.getElementById('searchButton').click();
                 });
 
@@ -1675,7 +1691,7 @@ function initAutosuggest(inputId) {
             container.style.display = 'none';
         }
     });
-    
+
     // Hide on Escape
     input.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') container.style.display = 'none';
