@@ -439,6 +439,16 @@ input:disabled, select:disabled {
     transition: opacity 0.2s ease-in-out, transform 0.2s ease-in-out;
 }
 
+.mouselogo {
+    transition: transform 0.1s ease; /* Smooths the animation */
+    display: inline-block; /* Required for transform to work on inline elements */
+}
+
+/* 2. Define the subtle change on hover */
+.mouselogo:hover {
+    transform: scale(1.05); /* Grows by only 5% */
+}
+
 /* State when user has scrolled down */
 .navbar-scrolled {
     background-color: rgba(33, 37, 41, 0.95) !important; /* Dark background */
@@ -519,5 +529,5 @@ input:disabled, select:disabled {
 }
 
 .results-thumb {
-    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 1));
+    filter: drop-shadow(1px 2px 3px rgba(0, 0, 0, 1));
 }
