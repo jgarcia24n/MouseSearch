@@ -461,3 +461,40 @@ input:disabled, select:disabled {
         padding-bottom: 4px;
     }
 }
+
+/* --- Autosuggest Dropdown --- */
+.input-group, .form-floating {
+    position: relative; /* Anchor for absolute positioning */
+}
+
+.autosuggest-results {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 1050; /* Above most bootstrap content */
+    display: none;
+    max-height: 400px;
+    overflow-y: auto;
+    margin-top: 2px;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+}
+
+/* Typography tweaks for compact suggestions */
+.text-xs {
+    font-size: 0.75rem;
+}
+.text-sm {
+    font-size: 0.875rem;
+}
+
+/* Dark mode compatibility for the list items */
+[data-bs-theme="dark"] .autosuggest-results .list-group-item {
+    background-color: var(--bs-body-bg);
+    border-color: var(--bs-border-color);
+    color: var(--bs-body-color);
+}
+[data-bs-theme="dark"] .autosuggest-results .list-group-item:hover {
+    background-color: var(--bs-tertiary-bg);
+}

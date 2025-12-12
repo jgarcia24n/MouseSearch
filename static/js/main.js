@@ -1571,3 +1571,119 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 });
+
+// ============================================================
+//  4. AUTOSUGGEST LOGIC
+// ============================================================
+
+const debounce = (func, wait) => {
+    let timeout;
+    return (...args) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(this, args), wait);
+    };
+};
+
+function initAutosuggest(inputId) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+
+    // Create results dropdown container
+    const container = document.createElement('div');
+    container.className = 'autosuggest-results list-group shadow-sm';
+    // Position it immediately after the input
+    input.parentNode.appendChild(container);
+
+    const performSearch = async (val) => {
+        if (val.length < 3) {
+            container.style.display = 'none';
+            return;
+        }
+
+        try {
+            const res = await fetch(`/audible/autosuggest?q=${encodeURIComponent(val)}`);
+            const data = await res.json();
+
+            container.innerHTML = '';
+
+            if (data.length === 0) {
+                container.style.display = 'none';
+                return;
+            }
+
+            data.forEach(item => {
+                const a = document.createElement('a');
+                a.className = 'list-group-item list-group-item-action d-flex align-items-center gap-3 py-2';
+                a.href = '#';
+                
+                // Determine if we show the Series line
+                // Logic: Only show series if it exists
+                const seriesHtml = item.series 
+                    ? `<div class="text-xs text-body-secondary text-truncate"><i class="bi bi-collection me-1"></i>${item.series}</div>` 
+                    : '';
+
+                a.innerHTML = `
+                    <img src="${item.thumbnail || '/static/icons/no_cover.png'}" 
+                         class="rounded object-fit-cover" 
+                         width="40" height="40" 
+                         alt="Cover">
+                    <div class="overflow-hidden w-100">
+                        <div class="fw-bold text-truncate text-sm">${item.title}</div>
+                        <div class="text-xs text-body-secondary text-truncate">${item.author}</div>
+                        ${seriesHtml}
+                    </div>
+                `;
+
+                // Click Handler: Populate input and submit
+                a.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    
+                    // 1. Populate the specific input user typed in
+                    input.value = `${item.title} ${item.author}`;
+                    
+                    // 2. Also sync the main #query input if user typed in nav bar
+                    const mainQuery = document.getElementById('query');
+                    if (mainQuery && input.id !== 'query') {
+                        mainQuery.value = input.value;
+                    }
+
+                    // 3. Clear suggestions
+                    container.style.display = 'none';
+
+                    // 4. Trigger the actual search button click
+                    document.getElementById('searchButton').click();
+                });
+
+                container.appendChild(a);
+            });
+
+            container.style.display = 'block';
+
+        } catch (e) {
+            console.error("Autosuggest error", e);
+        }
+    };
+
+    // Attach Debounce (300ms)
+    input.addEventListener('input', debounce((e) => {
+        performSearch(e.target.value.trim());
+    }, 300));
+
+    // Hide on click outside
+    document.addEventListener('click', (e) => {
+        if (!input.contains(e.target) && !container.contains(e.target)) {
+            container.style.display = 'none';
+        }
+    });
+    
+    // Hide on Escape
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') container.style.display = 'none';
+    });
+}
+
+// Initialize
+document.addEventListener("DOMContentLoaded", function () {
+    initAutosuggest('query');             // Main page search
+    initAutosuggest('nav-search-input');  // Navbar search
+});

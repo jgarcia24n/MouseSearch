@@ -7,6 +7,8 @@ import argparse
 import os
 import time
 import hashlib
+import collections
+
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from httpx import Limits, Timeout, AsyncHTTPTransport
@@ -41,6 +43,39 @@ pending_mid_resolutions = {}  # Maps MID -> {"added_at": timestamp, "metadata": 
 
 # --- SSE Globals ---
 connected_websockets = set() 
+
+# --- RATE LIMITING HELPER ---
+class LeakyBucket:
+    """
+    Enforces a rate limit of `limit` requests per `period` seconds.
+    """
+    def __init__(self, limit, period):
+        self.limit = limit
+        self.period = period
+        self.tokens = limit
+        self.last_update = time.monotonic()
+        self.lock = asyncio.Lock()
+
+    async def acquire(self):
+        async with self.lock:
+            now = time.monotonic()
+            elapsed = now - self.last_update
+            self.last_update = now
+            
+            # Refill tokens
+            new_tokens = elapsed * (self.limit / self.period)
+            self.tokens = min(self.limit, self.tokens + new_tokens)
+            
+            if self.tokens >= 1:
+                self.tokens -= 1
+                return True
+            
+            # Calculate wait time if empty
+            wait_time = (1 - self.tokens) * (self.period / self.limit)
+            return wait_time
+
+# Initialize Limiter: 120 requests per 60 seconds
+audible_limiter = LeakyBucket(120, 60.0)
 
 @app.before_serving
 async def startup():
@@ -711,6 +746,78 @@ async def push_mam_stats():
     app.logger.debug("[MAM-STATS] Successfully pushed MAM stats via SSE")
 
 # --- QUART ROUTES ---
+@app.route('/audible/autosuggest', methods=['GET'])
+async def audible_autosuggest():
+    query = request.args.get('q', '').strip()
+    if len(query) < 3:
+        return jsonify([])
+
+    # 1. Acquire Rate Limit Token
+    wait_or_success = await audible_limiter.acquire()
+    if wait_or_success is not True:
+        # If we are out of tokens, sleep for the required time (smoothing)
+        await asyncio.sleep(wait_or_success)
+
+    # 2. Query Audible API
+    # We use 'keywords' to match Author OR Title OR Series
+    params = {
+        'keywords': query,
+        'num_results': 5,
+        'products_sort_by': 'Relevance',
+        'image_sizes': '500,252',
+        'response_groups': 'media,contributors,product_attrs,series'
+    }
+    
+    url = "https://api.audible.com/1.0/catalog/products"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, params=params, timeout=5.0)
+            
+            if resp.status_code != 200:
+                app.logger.error(f"Audible API Error: {resp.status_code} - {resp.text}")
+                return jsonify([])
+
+            data = resp.json()
+            products = data.get('products', [])
+            suggestions = []
+
+            for p in products:
+                # -- Extract Data --
+                title = p.get('title', 'Unknown')
+                
+                # Authors (List -> String)
+                authors = [a.get('name') for a in p.get('authors', [])]
+                author_str = ", ".join(authors) if authors else ""
+
+                # Series (Check if exists)
+                series_str = None
+                if 'series' in p and p['series']:
+                    # Grab the first series info
+                    s = p['series'][0]
+                    s_title = s.get('title')
+                    s_seq = s.get('sequence')
+                    if s_title:
+                        series_str = f"{s_title} #{s_seq}" if s_seq else s_title
+
+                # Thumbnail (Prefer 252, fallback to 500)
+                images = p.get('product_images', {})
+                thumb = images.get('252') or images.get('500') or ""
+
+                suggestions.append({
+                    'title': title,
+                    'author': author_str,
+                    'series': series_str,
+                    'thumbnail': thumb
+                })
+
+            return jsonify(suggestions)
+
+    except Exception as e:
+        app.logger.error(f"Autosuggest Exception: {e}")
+        return jsonify([])
+    
+    
 @app.route('/mam/status', methods=['GET'])
 async def mam_status(): 
     return jsonify({'status': 'connected' if await login_mam() else 'not connected'})
