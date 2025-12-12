@@ -1521,6 +1521,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const navSearchContainer = document.getElementById('nav-search-container');
     const navSearchInput = document.getElementById('nav-search-input');
     const navSearchForm = document.getElementById('nav-search-form');
+    const navbarBrand = document.getElementById('navbar-brand');
 
     // 1. Scroll Listener (Show/Hide)
     window.addEventListener('scroll', () => {
@@ -1534,10 +1535,16 @@ document.addEventListener("DOMContentLoaded", function () {
             navElement.classList.add('navbar-scrolled');
             navSearchContainer.classList.remove('opacity-0');
             navSearchContainer.style.pointerEvents = 'auto';
+
+            navbarBrand.classList.remove('opacity-0');
+            navbarBrand.style.pointerEvents = 'auto';
         } else {
             navElement.classList.remove('navbar-scrolled');
             navSearchContainer.classList.add('opacity-0');
             navSearchContainer.style.pointerEvents = 'none';
+
+            navbarBrand.classList.add('opacity-0');
+            navbarBrand.style.pointerEvents = 'none';
             // Optional: Blur to hide mobile keyboard if they scroll back up quickly
             if (document.activeElement === navSearchInput) navSearchInput.blur();
         }
