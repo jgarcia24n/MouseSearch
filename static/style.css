@@ -286,9 +286,8 @@ input:disabled, select:disabled {
         
         /* 2. Force Fill: Make it take up the full space of the column */
         width: 100%; 
-        
-        /* 3. Reset Limits: Ensure no max-height prevents it from growing */
-        max-height: none; 
+    
+        max-height: 50vh;
     }
 }
 
