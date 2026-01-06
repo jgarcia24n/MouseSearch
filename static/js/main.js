@@ -863,6 +863,10 @@ document.addEventListener("DOMContentLoaded", function () {
     const personalFlBtn = document.getElementById('use-personal-fl-btn');
     const freeleechIndicator = document.getElementById('confirm-freeleech-indicator');
 
+    // Used to prevent repeated MID resolve calls while the confirm modal is open.
+    const torrentInClientByMid = new Map(); // mid(string) -> boolean
+    const torrentInClientCheckInFlight = new Set();
+
     function markTorrentPersonalFreeleech(torrentId) {
         try {
             if (!torrentId) return;
@@ -980,18 +984,53 @@ document.addEventListener("DOMContentLoaded", function () {
 
         // 2. Handle Personal FL Button (Wedge)
         if (personalFlBtn) {
-            const hasTorrentId = !!(pendingDownloadData && pendingDownloadData.id);
-            const canUsePersonal = hasTorrentId && !state.isFreeleech;
+            const personalFlTooltipWrapper = document.getElementById('use-personal-fl-tooltip-wrapper');
+            const tooltipTarget = personalFlTooltipWrapper || personalFlBtn;
+            const mid = pendingDownloadData?.id ? String(pendingDownloadData.id) : null;
+            const hasTorrentId = !!mid;
 
-            personalFlBtn.disabled = !canUsePersonal;
-            const tooltip = !hasTorrentId
-                ? 'Select a torrent first'
-                : state.isFreeleech
-                    ? 'Already Freeleech for you'
-                    : 'Spend one Freeleech Wedge on this torrent';
+            // Disable reasons (in priority order)
+            let disabledReason = null;
 
-            personalFlBtn.setAttribute('title', tooltip);
-            refreshTooltip(personalFlBtn);
+            if (!hasTorrentId) {
+                disabledReason = 'Select a torrent first';
+            } else if (state.isFreeleech) {
+                disabledReason = state.reason
+                    ? `This torrent is already Freeleech (${state.reason})`
+                    : 'This torrent is already Freeleech';
+            } else if (parseInt(pendingDownloadData?.my_snatched ?? 0) === 1) {
+                disabledReason = 'You have already downloaded this torrent';
+            } else if (torrentInClientByMid.get(mid) === true) {
+                disabledReason = 'This torrent is already in your torrent client';
+            } else if (torrentInClientByMid.has(mid) === false) {
+                // Not present; keep enabled.
+                disabledReason = null;
+            } else {
+                // Unknown yet: kick off a resolve_mid check once, and disable while checking.
+                if (!torrentInClientCheckInFlight.has(mid)) {
+                    torrentInClientCheckInFlight.add(mid);
+                    getTorrentHashByMID(mid)
+                        .then(hash => {
+                            torrentInClientByMid.set(mid, !!hash);
+                        })
+                        .catch(() => {
+                            // If resolve fails, treat as unknown -> allow wedge rather than blocking.
+                            torrentInClientByMid.delete(mid);
+                        })
+                        .finally(() => {
+                            torrentInClientCheckInFlight.delete(mid);
+                            updateConfirmModalFreeleechUI();
+                        });
+                }
+                disabledReason = 'Checking torrent status…';
+            }
+
+            personalFlBtn.disabled = !!disabledReason;
+            const tooltip = disabledReason || 'Spend one Freeleech Wedge on this torrent';
+            tooltipTarget.setAttribute('title', tooltip);
+            tooltipTarget.setAttribute('data-bs-original-title', tooltip);
+            tooltipTarget.setAttribute('data-bs-toggle', 'tooltip');
+            refreshTooltip(tooltipTarget);
         }
     }
 
