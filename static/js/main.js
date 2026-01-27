@@ -1401,15 +1401,6 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     }
 
-    // Settings Offcanvas History Support
-    const settingsOffcanvas = document.getElementById('settingsOffcanvas');
-    if (settingsOffcanvas) {
-        settingsOffcanvas.addEventListener('shown.bs.offcanvas', () => history.pushState({ type: 'settings' }, '', '#settings'));
-        settingsOffcanvas.addEventListener('hidden.bs.offcanvas', () => {
-            if (window.location.hash === '#settings') history.back();
-        });
-    }
-
     // Result Click Handling (Download/Series)
     if (resultsContainer) {
         resultsContainer.addEventListener('click', function (event) {
