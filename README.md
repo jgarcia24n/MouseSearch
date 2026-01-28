@@ -11,6 +11,7 @@ MouseSearch is a self-hosted web application that provides a clean, fast search 
 
 * **MAM Search:** Full-text search for torrents on MyAnonamouse.
 * **Advanced Filtering:** Filter by title, author, narrator, media type, language, and advanced tracker filters (e.g., Freeleech, VIP, Active).
+* **Customizable Search Results:** Toggle specific columns (Series, Narrator, File Type, Seeders, etc.) to tailor the results view to your needs.
 * **One-Click Downloading:** Send torrents directly to your torrent client (supports qBittorrent, Deluge, Transmission, and rTorrent), assigning a category from the UI.
 * **Live Status Dashboards:**
     * View your MAM user stats (username, ratio, bonus points, etc.) directly in the app.
@@ -20,13 +21,13 @@ MouseSearch is a self-hosted web application that provides a clean, fast search 
 * **Upload Credit Auto-Buy:** Intelligent upload credit management with multiple modes:
     * Auto-purchase when ratio falls below threshold (configurable, MAM minimum is 1.0)
     * Auto-purchase when upload buffer (uploaded - downloaded) is too low
-    * Auto-purchase when bonus points exceed a threshold (continues until below threshold)
+    * **[NEW]** Auto-purchase when bonus points exceed a threshold (spends excess points to build buffer)
     * Pre-download buffer check - prevents downloads larger than available buffer and prompts for upload credit purchase
-    * Manual purchase interface with preset amounts (50 GB, 100 GB), custom multiples of 50 GB up to 200 GB, or max affordable option (rounded down to the nearest 50 GB)
+    * Manual purchase interface with preset amounts, custom multiples of 50 GB (up to 200 GB), or max affordable option (rounded down to the nearest 50 GB)
 * **Freeleech Tools:** VIP Freeleech awareness in search results plus a personal Freeleech wedge button in the download confirmation dialog.
-* **Enhanced Results UI:** Responsive cards, improved book details layout, and a high-res cover lightbox.
+* **Enhanced Details UI:** Responsive cards, improved book details layout, a high-res cover lightbox, and a **MediaInfo Inspector** tree for viewing technical file metadata.
 * **Live Torrent Polling:** After adding a torrent, the UI polls your torrent client to show its download status (e.g., "Downloading 50%", "Seeding") in real-time in results and the book details modal. Designates previously downloaded torrents as "Downloaded".
-* **[BETA] Auto-Organization:** (See details below) Automatically hard-links completed audiobooks from your download folder to a clean, organized library structure (e.g., `Author/Title/file.m4b`).
+* **[BETA] Auto-Organization:** (See details below) Automatically organizes completed audiobooks from your download folder to a clean library structure (e.g., `Author/Title/file.m4b`) using either hardlinks (instant, no space used) or file copies.
 
 ## Technology Stack
 
@@ -115,7 +116,7 @@ The application will be available at `http://<your-server-ip>:5000`.
     ```bash
     ./launch.sh
     ```
-    
+
     Or specify a custom port:
     ```bash
     ./launch.sh --port 8080
@@ -175,10 +176,12 @@ MouseSearch supports modular torrent clients. Currently supported: **qBittorrent
 | `AUTO_ORGANIZE_ON_ADD` | No | Set to `true` to enable auto-organization when torrents are added. Defaults to `false`. |
 | `AUTO_ORGANIZE_ON_SCHEDULE` | No | Set to `true` to enable scheduled auto-organization. Defaults to `false`. |
 | `AUTO_ORGANIZE_INTERVAL_HOURS` | No | Number of hours between scheduled organization scans (only applies if `AUTO_ORGANIZE_ON_SCHEDULE` is `true`). Defaults to `1`. |
+| `AUTO_ORGANIZE_USE_COPY` | No | Set to `true` to copy files instead of hardlinking. Useful if download/organize paths are on different filesystems. Defaults to `false`. |
 | `ORGANIZED_PATH` | If auto-organization is enabled | The *container* path for your organized library (e.g., `/downloads/organized/`). |
 | `TORRENT_DOWNLOAD_PATH` | If auto-organization is enabled | The *container* path where your torrent client saves completed files for this category (e.g., `/downloads/torrents/`). |
 | `ENABLE_FILESYSTEM_THUMBNAIL_CACHE` | No | Set to `true` to enable filesystem caching of thumbnail images (stores in `DATA_PATH/cache/thumbnails`). Defaults to `false`. **Enable this if you experience slow thumbnail loading or suspect you're hitting MAM rate limits.** Cached thumbnails expire after 30 days. |
 | `THUMBNAIL_CACHE_MAX_SIZE_MB` | No | Maximum cache size in megabytes (only applies when `ENABLE_FILESYSTEM_THUMBNAIL_CACHE` is enabled). Oldest files are deleted first when limit is exceeded. Defaults to `500`. |
+| `RESULTS_DISPLAY_FIELDS` | No | List of fields to display in search results. Options: `date_uploaded`, `file_type`, `file_size`, `snatches`, `seeders`, `category`, `language`, `narrator`, `series`. |
 | `PUID` | No | (Docker only) User ID to run the container as. Set to your host user's UID for correct file permissions. |
 | `PGID` | No | (Docker only) Group ID to run the container as. Set to your host user's GID for correct file permissions. |
 
@@ -208,13 +211,13 @@ services:
     volumes:
       - ./data:/data  # location that config and state files will be stored
       - /downloads:/downloads # where all downloads are stored (torrent client downloads and organized files) -- only needed if using auto-organize
-      
+
       # see README.md for recommended structure and paths
-      
+
     env_file: .env # optional: load environment variables from a file
 
     environment:
-      - TZ=America/Chicago 
+      - TZ=America/Chicago
       # Change these to match your host user (run 'id' in terminal to check)
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
@@ -235,7 +238,7 @@ The application will be available at `http://<your-server-ip>:5000`.
 ## Usage
 
 1.  Open the application in your browser.
-2.  The app will show "NOT CONNECTED" for MAM and your torrent client. 
+2.  The app will show "NOT CONNECTED" for MAM and your torrent client.
 3.  **Configure your settings:** You can configure all settings directly through the web interface, or use the `.env` file.
 4.  Once configured, the dashboards should automatically update to "CONNECTED" and populate your user info.
 4.  Use the search bar to find content.
@@ -251,43 +254,41 @@ When adding a torrent with `AUTO_ORGANIZE_ON_ADD` enabled, MouseSearch will pres
 
 ## [BETA] Auto-Organization Feature
 
-This feature is designed to automate your media library. When enabled, it hard-links completed audio files from your "messy" download directory into a "clean" library directory, organized in subdirectories by `Author/Title` or `Author/Series/Title`.
+This feature is designed to automate your media library. When enabled, it hard-links (default) or copies completed audio files from your "messy" download directory into a "clean" library directory, organized in subdirectories by `Author/Title` or `Author/Series/Title`.
 
-It **uses hard links**, not copies. This means it takes up **no additional disk space**, and **it will not interfere with torrent seeding** (does not modify or restructure the original torrent files)
+It **defaults to hard links**, which means it takes up **no additional disk space**, and **it will not interfere with torrent seeding**.
 
 ### Configuration Options
 
 You can control two separate aspects of auto-organization:
 
-- **`AUTO_ORGANIZE_ON_ADD`**: Automatically organize files when torrents are added to your torrent client via the MouseSearch interface
-- **`AUTO_ORGANIZE_ON_SCHEDULE`**: Periodically check for unorganized files at a configurable interval (mainly used as a backup to the ON_ADD functionality)
-- **`AUTO_ORGANIZE_INTERVAL_HOURS`**: How often (in hours) to run the scheduled organization scan (defaults to 1 hour)
-
-These can be enabled independently of each other:
-- Enable only `AUTO_ORGANIZE_ON_ADD` for immediate organization when files are added
-- Enable only `AUTO_ORGANIZE_ON_SCHEDULE` for batch processing on a schedule
-- Enable both for maximum coverage (recommended)
-- Adjust `AUTO_ORGANIZE_INTERVAL_HOURS` to control how frequently the scheduler runs (e.g., every 2 hours, every 6 hours, etc.)
+- **`AUTO_ORGANIZE_ON_ADD`**: Automatically organize files when torrents are added to your torrent client via the MouseSearch interface.
+- **`AUTO_ORGANIZE_ON_SCHEDULE`**: Periodically check for unorganized files at a configurable interval (mainly used as a backup to the ON_ADD functionality).
+- **`AUTO_ORGANIZE_INTERVAL_HOURS`**: How often (in hours) to run the scheduled organization scan (defaults to 1 hour).
+- **`AUTO_ORGANIZE_USE_COPY`**: If set to true, MouseSearch will copy files instead of hardlinking them. Enable this if your downloads and organized library reside on different filesystems/disks.
 
 ### How It Works
 
 1.  When `AUTO_ORGANIZE_ON_ADD` is enabled and you add a torrent, MouseSearch calculates its infohash and saves the Author/Title metadata from Myanonamouse to `./data/database.json`.
 2.  When `AUTO_ORGANIZE_ON_SCHEDULE` is enabled, the app includes a scheduler that runs at the configured interval (default: every hour, configurable via `AUTO_ORGANIZE_INTERVAL_HOURS`) to check for unorganized files.
 3.  Both methods check `database.json` for any torrents downloaded via MouseSearch that are currently unorganized.
-4.  For each unorganized torrent, MouseSearch talks with your torrent client to figure out where the torrent files currently are, then hardlinks them to your `organized` directory.
+4.  For each unorganized torrent, MouseSearch talks with your torrent client to figure out where the torrent files currently are, then hardlinks (or copies) them to your `organized` directory.
 
 > **Note:** currently MouseSearch only organizes torrents that have been downloaded using MouseSearch **after** this feature has been enabled. May in the future make this more flexible.
 
 ### Critical Setup Requirement
 
-For hard links to work, your source (`TORRENT_DOWNLOAD_PATH`) and destination (`ORGANIZED_PATH`) directories **must**:
+**If using the default Hardlink mode (`AUTO_ORGANIZE_USE_COPY=false`):**
+
+Your source (`TORRENT_DOWNLOAD_PATH`) and destination (`ORGANIZED_PATH`) directories **must**:
 1. exist on the same filesystem
+2. **AND** within the same volume mount (if using Docker)
 
-    **AND** 2. within the same volume mount (if using Docker)
+**If using Copy mode (`AUTO_ORGANIZE_USE_COPY=true`):**
 
-The easiest way to ensure this is to have a single parent directory (e.g., `/mnt/storage/downloads`) on your host machine that contains *both* your torrents and your organized media. You then pass this single parent directory as a volume in your `compose.yaml`, as shown in the example.
+You may use different filesystems or Docker volumes, but be aware that this will double the disk usage for every downloaded file.
 
-#### Recommended File Structure (if using auto-organize)
+#### Recommended File Structure (for Hardlink mode)
 
        downloads
        ├── organized <- where your organized files will appear (point Audiobookshelf here)
@@ -299,8 +300,6 @@ The easiest way to ensure this is to have a single parent directory (e.g., `/mnt
 * **Volume Mount (Docker):** `- /mnt/storage/downloads:/downloads`
 * **.env `TORRENT_DOWNLOAD_PATH`:** `/downloads/torrents/`
 * **.env `ORGANIZED_PATH`:** `/downloads/organized/`
-
-**For Bare Metal installations:** Simply use absolute paths on your host system, again ensuring they are both on the same fileysystem/disk (e.g., `/mnt/storage/downloads/torrents/` and `/mnt/storage/downloads/organized/`).
 
 This setup guarantees that both paths point to the same underlying device, allowing hard links to be created.
 
@@ -321,7 +320,7 @@ Planned features and enhancements for future releases:
 #### Torrent Client Support
 - [x] **qBittorrent** support
 - [x] **Transmission** support
-- [x] **Deluge** support  
+- [x] **Deluge** support
 - [x] **rTorrent** support
 
 **Have a feature request?** Open an issue on [GitHub](https://github.com/sevenlayercookie/MouseSearch/issues) to suggest new features
