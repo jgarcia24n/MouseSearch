@@ -143,7 +143,9 @@ Open the `.env` file and configure the following settings.
 | Variable | Required | Description |
 | :--- | :--- | :--- |
 | `QUART_SECRET_KEY` | **Yes** | A long, random string for session security. You can generate one with `openssl rand -hex 32` (or just smash on the keyboard a bit) |
-| `MAM_ID` | **Yes** | Your `mam_id` cookie value from [MyAnonamouse](https://www.myanonamouse.net/preferences/index.php?view=security). |
+| `MAM_ID` | **Yes, unless using Mousehole** | Your `mam_id` cookie value from [MyAnonamouse](https://www.myanonamouse.net/preferences/index.php?view=security). |
+| `USE_MOUSEHOLE_MAM_COOKIE` | No | Set to `true` to read the MAM cookie from a running Mousehole service instead of configuring `MAM_ID` in MouseSearch. Defaults to `false`. |
+| `MOUSEHOLE_API_URL` | If `USE_MOUSEHOLE_MAM_COOKIE` is `true` | Base URL for Mousehole's API, such as `http://localhost:5010` or `http://mousehole:5010`. Defaults to `http://localhost:5010`. |
 
 ### Torrent Client Configuration
 
@@ -164,7 +166,7 @@ MouseSearch supports modular torrent clients. Currently supported: **qBittorrent
 | Variable | Required | Description |
 | :--- | :--- | :--- |
 | `DATA_PATH` | No | Directory path for storing app data files (config.json, database.json, ip_state.json). Defaults to `./data`. |
-| `ENABLE_DYNAMIC_IP_UPDATE` | No | Set to `true` to enable automatic IP checking and updating of MAM's "Dynamic Seedbox IP" setting. Defaults to `false`. |
+| `ENABLE_DYNAMIC_IP_UPDATE` | No | Set to `true` to enable automatic IP checking and updating of MAM's "Dynamic Seedbox IP" setting. Ignored when Mousehole cookie mode is enabled because Mousehole handles its own IP updates. Defaults to `false`. |
 | `DYNAMIC_IP_UPDATE_INTERVAL_HOURS` | No | Number of hours between automatic IP checks (only applies if `ENABLE_DYNAMIC_IP_UPDATE` is `true`). Defaults to `3`. |
 | `AUTO_BUY_VIP` | No | Set to `true` to enable automatic VIP credit top-ups using bonus points. Defaults to `false`. |
 | `AUTO_BUY_VIP_INTERVAL_HOURS` | No | Number of hours between automatic VIP purchases (only applies if `AUTO_BUY_VIP` is `true`). Defaults to `24`. |
@@ -250,6 +252,12 @@ AUTO_TASK_WEBHOOK_EVENTS=auto_buy_vip
 AUTO_TASK_WEBHOOK_METHOD=GET
 AUTO_TASK_WEBHOOK_PARAMS=source=mousesearch&event={event}&status={status}&summary={summary}
 ```
+
+**Using Mousehole for the MAM cookie:**
+
+If you already run [Mousehole](https://github.com/t-mart/mousehole), enable `USE_MOUSEHOLE_MAM_COOKIE` and set `MOUSEHOLE_API_URL` to the URL MouseSearch can reach. MouseSearch reads Mousehole's `currentCookie` from `GET /state`. MouseSearch does not schedule or force IP updates in this mode; Mousehole remains responsible for keeping MAM's dynamic seedbox IP current.
+
+**Important:** Mousehole and MouseSearch must share the same public IP address, such as the same server or VPN connection. If they do not, MouseSearch may not function.
 
 **How to find your `MAM_ID`:**
 1.  In any web browser, navigate to [Security](https://www.myanonamouse.net/preferences/index.php?view=security) on Myanonamouse

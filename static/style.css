@@ -116,6 +116,10 @@ input:disabled, select:disabled {
     cursor: not-allowed;
 }
 
+#MAM_ID:disabled {
+    cursor: text;
+}
+
 .bd-placeholder-img {
       font-size: 1.125rem;
       text-anchor: middle;
@@ -389,6 +393,13 @@ input:disabled, select:disabled {
 .settings-menu-icon {
     height: 1em !important;
     width: 1em !important;
+}
+
+.mousehole-settings-logo {
+    width: 1rem;
+    height: 1rem;
+    object-fit: contain;
+    flex: 0 0 auto;
 }
 
 #settingTabs {

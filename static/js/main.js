@@ -1024,25 +1024,103 @@ async function fetchAndUpdateTorrentStatus(hash, resultItem) {
     } catch (error) { console.error(`Error fetching hash ${hash}:`, error); }
 }
 
+function copyTextWithFeedback(button, text) {
+    if (!navigator.clipboard || !text) return;
+    navigator.clipboard.writeText(text);
+    const originalIcon = button.innerHTML;
+    button.innerHTML = '<i class="bi bi-check2 text-success"></i>';
+    setTimeout(() => button.innerHTML = originalIcon, 2000);
+}
+
+function fieldCopyValue(field) {
+    if (!field) return '';
+    const value = 'value' in field ? field.value : field.textContent;
+    return String(value || '').trim();
+}
+
+function updateCopyFieldButtons() {
+    document.querySelectorAll('.copy-field-btn').forEach(btn => {
+        const selector = btn.dataset.copyTarget;
+        const target = selector ? document.querySelector(selector) : null;
+        const value = fieldCopyValue(target);
+        const usableValue = value && value !== 'Not synced';
+        const mouseholeEnabled = document.getElementById('USE_MOUSEHOLE_MAM_COOKIE')?.checked;
+        const targetIsIgnoredMamId = btn.dataset.copyTarget === '#MAM_ID' && mouseholeEnabled;
+        btn.classList.toggle('d-none', !navigator.clipboard || !usableValue || targetIsIgnoredMamId);
+    });
+}
+
+function normalizeIpForCompare(value) {
+    return String(value || '').trim().toLowerCase();
+}
+
+let lastMouseholeIpMismatchToastKey = '';
+
+function currentMouseholeIpMismatch() {
+    const warning = document.getElementById('mousehole-ip-warning');
+    if (!warning) return null;
+
+    const mouseholeEnabled = document.getElementById('USE_MOUSEHOLE_MAM_COOKIE')?.checked;
+    const mouseholeIp = normalizeIpForCompare(warning.dataset.mouseholeIp);
+    const mousesearchIp = normalizeIpForCompare(window.mousesearchPublicIp);
+    const shouldWarn = Boolean(mouseholeEnabled && mouseholeIp && mousesearchIp && mouseholeIp !== mousesearchIp);
+
+    return { warning, mouseholeIp, mousesearchIp, shouldWarn };
+}
+
+function showMouseholeIpMismatchToast(force = false) {
+    const mismatch = currentMouseholeIpMismatch();
+    if (!mismatch?.shouldWarn) return;
+
+    const mismatchKey = `${mismatch.mouseholeIp}|${mismatch.mousesearchIp}`;
+    if (force || lastMouseholeIpMismatchToastKey !== mismatchKey) {
+        lastMouseholeIpMismatchToastKey = mismatchKey;
+        showToast('Mousehole and MouseSearch do not share the same public IP address. MouseSearch may not function.', 'danger');
+    }
+}
+
+function updateMouseholeIpWarning(showToastOnMismatch = true) {
+    const mismatch = currentMouseholeIpMismatch();
+    if (!mismatch) return;
+
+    const { warning, mouseholeIp, mousesearchIp, shouldWarn } = mismatch;
+
+    document.getElementById('mousehole-reported-ip').textContent = mouseholeIp;
+    document.getElementById('mousesearch-reported-ip').textContent = mousesearchIp;
+    warning.classList.toggle('d-none', !shouldWarn);
+
+    if (showToastOnMismatch && shouldWarn) {
+        showMouseholeIpMismatchToast();
+    } else {
+        lastMouseholeIpMismatchToastKey = '';
+    }
+}
+
+function setMouseholeReportedIp(ip, showToastOnMismatch = true) {
+    const warning = document.getElementById('mousehole-ip-warning');
+    if (!warning) return;
+    warning.dataset.mouseholeIp = String(ip || '').trim();
+    updateMouseholeIpWarning(showToastOnMismatch);
+}
+
 async function fetchPublicIP() {
     fetch('/system/public_ip')
         .then(r => r.json())
         .then(data => {
             if (data.ip) {
+                window.mousesearchPublicIp = data.ip;
                 document.querySelectorAll('.backend-ip-display').forEach(el => el.textContent = data.ip);
                 document.querySelectorAll('.backend-ip-display-badge').forEach(el => el.style.display = 'inline-block');
                 document.querySelectorAll('.copy-ip-btn').forEach(btn => {
                     if (navigator.clipboard) {
                         btn.onclick = (e) => {
-                            navigator.clipboard.writeText(data.ip);
-                            const originalIcon = btn.innerHTML;
-                            btn.innerHTML = '<i class="bi bi-check2 text-success"></i>';
-                            setTimeout(() => btn.innerHTML = originalIcon, 2000);
+                            copyTextWithFeedback(btn, data.ip);
                         };
                     } else {
                         btn.style.display = 'none';
                     }
                 });
+                updateMouseholeIpWarning();
             } else {
                 document.querySelectorAll('.backend-ip-display').forEach(el => el.textContent = "Error");
             }
@@ -1156,6 +1234,7 @@ document.addEventListener("DOMContentLoaded", async function () {
         const isChecked = (id) => document.getElementById(id)?.checked || false;
 
         const config = [
+            { trigger: 'USE_MOUSEHOLE_MAM_COOKIE', target: 'MOUSEHOLE_API_URL' },
             { trigger: 'ENABLE_DYNAMIC_IP_UPDATE', target: 'DYNAMIC_IP_UPDATE_INTERVAL_HOURS' },
             { trigger: 'AUTO_BUY_VIP', target: 'AUTO_BUY_VIP_INTERVAL_HOURS' },
             { trigger: 'AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_ENABLED', target: 'AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_MB' },
@@ -1172,6 +1251,17 @@ document.addEventListener("DOMContentLoaded", async function () {
                 if (el) el.disabled = !enabled;
             });
         });
+
+        const useMouseholeCookie = isChecked('USE_MOUSEHOLE_MAM_COOKIE');
+        const mamIdInput = document.getElementById('MAM_ID');
+        if (mamIdInput) {
+            mamIdInput.disabled = useMouseholeCookie;
+            mamIdInput.required = !useMouseholeCookie;
+        }
+        const syncMouseholeButton = document.getElementById('sync-mousehole-cookie-button');
+        if (syncMouseholeButton) syncMouseholeButton.disabled = !useMouseholeCookie;
+        updateCopyFieldButtons();
+        updateMouseholeIpWarning();
 
         // Upload Check Interval Logic
         const ratioOn = isChecked('AUTO_BUY_UPLOAD_ON_RATIO');
@@ -1199,6 +1289,52 @@ document.addEventListener("DOMContentLoaded", async function () {
             shouldShowAutoOrganizeAdvanced ? advancedSectionCollapse.show() : advancedSectionCollapse.hide();
         }
     }
+
+    function normalizeMouseholeBaseUrl(value) {
+        const raw = String(value || '').trim();
+        if (!raw) return '';
+        const withScheme = raw.includes('://') ? raw : `http://${raw}`;
+        return withScheme.replace(/\/+$/, '');
+    }
+
+    function updateMouseholeLogoSrc() {
+        const logo = document.getElementById('mousehole-settings-logo');
+        const fallbackIcon = document.getElementById('mousehole-settings-logo-fallback');
+        const input = document.getElementById('MOUSEHOLE_API_URL');
+        if (!logo) return;
+
+        const baseUrl = normalizeMouseholeBaseUrl(input?.value || logo.dataset.baseSrc || '');
+        if (!baseUrl) {
+            logo.classList.add('d-none');
+            fallbackIcon?.classList.remove('d-none');
+            return;
+        }
+
+        logo.dataset.logoAttempt = 'instance';
+        logo.classList.remove('d-none');
+        fallbackIcon?.classList.add('d-none');
+        logo.src = `${baseUrl}/logo.svg`;
+    }
+
+    const mouseholeLogo = document.getElementById('mousehole-settings-logo');
+    if (mouseholeLogo) {
+        mouseholeLogo.dataset.baseSrc = normalizeMouseholeBaseUrl(mouseholeLogo.src.replace(/\/logo\.svg$/, ''));
+        mouseholeLogo.addEventListener('error', function () {
+            const fallbackIcon = document.getElementById('mousehole-settings-logo-fallback');
+            if (this.dataset.logoAttempt === 'instance' && this.dataset.fallbackSrc) {
+                this.dataset.logoAttempt = 'github';
+                this.src = this.dataset.fallbackSrc;
+                return;
+            }
+            this.classList.add('d-none');
+            fallbackIcon?.classList.remove('d-none');
+        });
+    }
+
+    const mouseholeUrlInput = document.getElementById('MOUSEHOLE_API_URL');
+    mouseholeUrlInput?.addEventListener('change', updateMouseholeLogoSrc);
+    mouseholeUrlInput?.addEventListener('blur', updateMouseholeLogoSrc);
+    updateMouseholeLogoSrc();
 
 
     ['AUTO_ORGANIZE_ON_ADD', 'AUTO_ORGANIZE_ON_SCHEDULE'].forEach(id => {
@@ -1286,10 +1422,12 @@ document.addEventListener("DOMContentLoaded", async function () {
         settingsForm.addEventListener('input', () => {
             if (isRestoringSettings) return;
             settingsDirty = true;
+            updateCopyFieldButtons();
         });
         settingsForm.addEventListener('change', () => {
             if (isRestoringSettings) return;
             settingsDirty = true;
+            updateCopyFieldButtons();
         });
     }
 
@@ -1307,6 +1445,15 @@ document.addEventListener("DOMContentLoaded", async function () {
     if (settingsForm) {
         captureSettingsSnapshot();
     }
+
+    document.querySelectorAll('.copy-field-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const selector = btn.dataset.copyTarget;
+            const target = selector ? document.querySelector(selector) : null;
+            copyTextWithFeedback(btn, fieldCopyValue(target));
+        });
+    });
+    updateCopyFieldButtons();
 
     // --- Directory Structure Logic ---
     const relTemplateInput = document.getElementById('REL_PATH_TEMPLATE');
@@ -1449,6 +1596,10 @@ document.addEventListener("DOMContentLoaded", async function () {
                 showToast(data.message, data.status === 'success' ? 'success' : 'danger');
                 if (data.status === 'success') {
                     captureSettingsSnapshot();
+                    const mouseholeCookieEl = document.getElementById('mousehole-last-cookie');
+                    if (mouseholeCookieEl && data.mousehole_cookie) mouseholeCookieEl.value = data.mousehole_cookie;
+                    if (Object.prototype.hasOwnProperty.call(data, 'mousehole_ip')) setMouseholeReportedIp(data.mousehole_ip);
+                    updateCopyFieldButtons();
                     const catDropdown = document.getElementById('TORRENT_CLIENT_CATEGORY');
                     if (catDropdown) catDropdown.dataset.currentValue = catDropdown.value;
 
@@ -1460,6 +1611,42 @@ document.addEventListener("DOMContentLoaded", async function () {
                 }
             })
             .catch(() => showToast("Error saving settings.", 'danger'));
+    });
+
+    document.getElementById('sync-mousehole-cookie-button')?.addEventListener('click', function () {
+        const button = this;
+        const lastCookieEl = document.getElementById('mousehole-last-cookie');
+        button.disabled = true;
+        const originalText = button.textContent;
+        button.textContent = 'Syncing...';
+
+        const payload = {
+            use_mousehole_mam_cookie: document.getElementById('USE_MOUSEHOLE_MAM_COOKIE')?.checked || false,
+            mousehole_api_url: document.getElementById('MOUSEHOLE_API_URL')?.value || ''
+        };
+
+        fetch('/mam/sync_mousehole_cookie', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+            .then(response => response.json().then(data => ({ ok: response.ok, data })))
+            .then(({ ok, data }) => {
+                if (lastCookieEl && data.cookie) lastCookieEl.value = data.cookie;
+                if (Object.prototype.hasOwnProperty.call(data, 'mousehole_ip')) setMouseholeReportedIp(data.mousehole_ip, false);
+                updateCopyFieldButtons();
+                showToast(data.message || (ok ? 'Mousehole cookie synced.' : 'Mousehole cookie sync failed.'), ok ? 'success' : 'danger');
+                if (ok && currentMouseholeIpMismatch()?.shouldWarn) {
+                    setTimeout(() => showMouseholeIpMismatchToast(true), 600);
+                }
+                if (ok) loadMamUserData();
+            })
+            .catch(() => showToast('Error syncing Mousehole cookie.', 'danger'))
+            .finally(() => {
+                button.textContent = originalText;
+                button.disabled = !document.getElementById('USE_MOUSEHOLE_MAM_COOKIE')?.checked;
+                updateCopyFieldButtons();
+            });
     });
 
     // Buy VIP Logic
