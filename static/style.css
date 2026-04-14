@@ -523,11 +523,16 @@ input:disabled, select:disabled {
     width: 100%;
     min-width: 0;
     padding: 0.6rem 0.7rem;
-    border: 1px solid var(--bs-border-color-translucent);
+    border: 1px solid var(--bs-border-color);
     border-radius: 8px;
-    background-color: rgba(var(--bs-body-bg-rgb), 0.58);
+    background-color: var(--bs-body-bg);
+    color: var(--bs-body-color);
     box-shadow: 0 0.125rem 0.35rem rgba(0, 0, 0, 0.08);
     transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.hardcover-match .hardcover-rating {
+    color: var(--bs-secondary-color) !important;
 }
 
 a.hardcover-match {
@@ -548,14 +553,15 @@ a.hardcover-match:focus-visible {
 }
 
 .hardcover-match--pending {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
     cursor: default;
+    color: var(--bs-secondary-color);
 }
 
 .hardcover-match--static {
     cursor: default;
+    color: var(--bs-secondary-color);
+    background-color: rgba(var(--bs-body-bg-rgb), 0.72);
+    box-shadow: none;
 }
 
 .hardcover-logo-icon,
