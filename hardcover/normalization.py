@@ -17,6 +17,14 @@ NOISE_TOKEN_RE = re.compile(
 )
 SEPARATOR_RE = re.compile(r"\s+[-_:|/]\s+")
 SERIES_NUMBER_RE = re.compile(r"\s*#\s*[\w.\-]+(?:\s*-\s*[\w.\-]+)?\s*$")
+GENERIC_AUTHOR_NAMES = {
+    "multiple authors",
+    "n/a",
+    "na",
+    "unknown",
+    "various",
+    "various authors",
+}
 
 
 def normalize_whitespace(value: Any) -> str:
@@ -139,8 +147,10 @@ def extract_isbns(result: dict[str, Any]) -> list[str]:
 
 def detect_author_name(result: dict[str, Any]) -> str:
     author = parse_mam_metadata_value(result.get("author_info"))
-    if author and author.lower() != "unknown":
-        return author.split(",")[0].strip()
+    if author:
+        first_author = author.split(",")[0].strip()
+        if first_author.lower() not in GENERIC_AUTHOR_NAMES:
+            return first_author
     title = strip_markup(result.get("title"))
     parts = [part.strip() for part in SEPARATOR_RE.split(title) if part.strip()]
     if len(parts) >= 2 and len(parts[0].split()) <= 5:

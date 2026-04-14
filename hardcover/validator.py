@@ -8,6 +8,10 @@ except ImportError:  # pragma: no cover - requirements include rapidfuzz.
     fuzz = None
 
 
+AUTHOR_MATCH_THRESHOLD = 80.0
+AUTHOR_MISMATCH_SCORE_CAP = 72.0
+
+
 def _string_list(value: Any) -> list[str]:
     if not value:
         return []
@@ -66,6 +70,10 @@ def _max_fuzzy_score(query: str, values: list[str]) -> float:
     return max((fuzzy_score(query, value) for value in values), default=0.0)
 
 
+def _max_ratio_score(query: str, values: list[str]) -> float:
+    return max((ratio_score(query, value) for value in values), default=0.0)
+
+
 def candidate_match_details(
     query: str,
     candidate: dict[str, Any],
@@ -75,11 +83,18 @@ def candidate_match_details(
 ) -> dict[str, Any]:
     titles = _candidate_titles(candidate)
     title_score = _max_fuzzy_score(query, titles)
+    title_ratio_score = _max_ratio_score(query, titles)
 
     query_key = _without_leading_article(query)
     exact_title = bool(query_key) and any(_without_leading_article(title) == query_key for title in titles)
 
-    author_score = _max_fuzzy_score(author_name, _candidate_authors(candidate)) if author_name else 0.0
+    candidate_authors = _candidate_authors(candidate)
+    author_score = _max_fuzzy_score(author_name, candidate_authors) if author_name else 0.0
+    author_mismatch = bool(
+        author_name
+        and candidate_authors
+        and author_score < AUTHOR_MATCH_THRESHOLD
+    )
     series_score = 0.0
     candidate_series = _candidate_series(candidate)
     for series_name in series_names or []:
@@ -92,13 +107,17 @@ def candidate_match_details(
         score = max(score, 82.0)
     if title_score >= 65 and author_score >= 90 and series_score >= 90:
         score = max(score, 88.0)
+    if author_mismatch:
+        score = min(score, AUTHOR_MISMATCH_SCORE_CAP)
 
     return {
         "score": round(score, 1),
         "title_score": round(title_score, 1),
+        "title_ratio_score": round(title_ratio_score, 1),
         "author_score": round(author_score, 1),
         "series_score": round(series_score, 1),
         "exact_title": exact_title,
+        "author_mismatch": author_mismatch,
     }
 
 
@@ -122,6 +141,16 @@ def fuzzy_score(query: str, candidate_text: str) -> float:
         return 0.0
     if fuzz is not None:
         return float(fuzz.token_set_ratio(query, candidate_text))
+    return SequenceMatcher(None, query.lower(), candidate_text.lower()).ratio() * 100
+
+
+def ratio_score(query: str, candidate_text: str) -> float:
+    query = str(query or "").strip()
+    candidate_text = str(candidate_text or "").strip()
+    if not query or not candidate_text:
+        return 0.0
+    if fuzz is not None:
+        return float(fuzz.ratio(query, candidate_text))
     return SequenceMatcher(None, query.lower(), candidate_text.lower()).ratio() * 100
 
 
@@ -151,6 +180,7 @@ def pick_valid_candidate(
             details["author_score"],
             details["series_score"],
             details["title_score"],
+            details["title_ratio_score"],
             -index,
         )
         if best_key is None or key > best_key:
