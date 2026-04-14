@@ -601,6 +601,13 @@ a.hardcover-match:focus-visible {
     color: rgba(255, 255, 255, 0.3) !important;
 }
 
+@media (max-width: 575.98px) {
+    .hardcover-mobile-hide,
+    .hardcover-review-count-mobile-hide {
+        display: none !important;
+    }
+}
+
 /* Ensure the image container stands out slightly in both modes */
 .img-container-adaptive {
     background-color: var(--bs-body-tertiary);

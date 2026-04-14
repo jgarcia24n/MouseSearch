@@ -378,7 +378,7 @@ function hardcoverUrl(metadata) {
     return `https://hardcover.app/${path}/${encodeURIComponent(slug)}`;
 }
 
-function renderStarRating(rating, ratingsCount) {
+function renderStarRating(rating, ratingsCount, { hideCountOnMobile = false } = {}) {
     if (!Number.isFinite(rating) || rating <= 0) return '';
     const clamped = Math.max(0, Math.min(5, rating));
     const stars = Array.from({ length: 5 }, (_, index) => {
@@ -394,7 +394,7 @@ function renderStarRating(rating, ratingsCount) {
 
     const count = Number(ratingsCount);
     const countHtml = count > 0
-        ? `&emsp;<span class="opacity-50 fw-normal">(${count.toLocaleString()})</span>`
+        ? `&emsp;<span class="opacity-50 fw-normal${hideCountOnMobile ? ' hardcover-review-count-mobile-hide' : ''}">(${count.toLocaleString()})</span>`
         : '';
 
     return `
@@ -441,8 +441,8 @@ function renderHardcoverMetadata(enrichment) {
                 <img src="${HARDCOVER_LOGO_URL}" alt="" style="width: 0.8rem; height: 0.8rem; object-fit: contain;" loading="lazy">
                 <span class="text-uppercase fw-semibold" style="letter-spacing: 0.05em;">Hardcover</span>
             </div>
-            ${hasRating ? `<div>${renderStarRating(rating, metadata.ratings_count)}</div>` : ''}
-            ${hasYear ? `<div class="text-body-secondary" style="font-size: 0.8rem;">Published ${escapeHtml(metadata.release_year)}</div>` : ''}
+            ${hasRating ? `<div>${renderStarRating(rating, metadata.ratings_count, { hideCountOnMobile: true })}</div>` : ''}
+            ${hasYear ? `<div class="text-body-secondary hardcover-mobile-hide" style="font-size: 0.8rem;">Published ${escapeHtml(metadata.release_year)}</div>` : ''}
         </${tagName}>`;
 }
 
