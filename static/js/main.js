@@ -901,6 +901,23 @@ function filterHardcoverSeriesEntries(entries, currentBookId, currentPosition) {
     return filtered.length ? filtered : list;
 }
 
+function scrollHardcoverSeriesStripToCurrent(strip) {
+    if (!strip) return;
+    const currentCard = strip.querySelector('.hardcover-series-card--current');
+    if (!currentCard) return;
+
+    const stripRect = strip.getBoundingClientRect();
+    const cardRect = currentCard.getBoundingClientRect();
+    const isFullyVisible = cardRect.left >= stripRect.left && cardRect.right <= stripRect.right;
+    if (isFullyVisible) return;
+
+    const centeredLeft = currentCard.offsetLeft - Math.max(0, (strip.clientWidth - currentCard.offsetWidth) / 2);
+    strip.scrollTo({
+        left: Math.max(0, centeredLeft),
+        behavior: 'smooth',
+    });
+}
+
 function renderHardcoverSeriesStrip(series, currentBookId, currentPosition) {
     const section = document.getElementById('detail-hc-series-strip-section');
     const meta = document.getElementById('detail-hc-series-strip-meta');
@@ -977,11 +994,7 @@ function renderHardcoverSeriesStrip(series, currentBookId, currentPosition) {
     strip.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((el) => {
         new bootstrap.Tooltip(el);
     });
-    strip.querySelector('.hardcover-series-card--current')?.scrollIntoView({
-        behavior: 'smooth',
-        block: 'nearest',
-        inline: 'center',
-    });
+    scrollHardcoverSeriesStripToCurrent(strip);
 }
 
 async function loadHardcoverSeriesStrip(metadata) {
