@@ -378,7 +378,7 @@ function hardcoverUrl(metadata) {
     return `https://hardcover.app/${path}/${encodeURIComponent(slug)}`;
 }
 
-function renderStarRating(rating) {
+function renderStarRating(rating, ratingsCount) {
     if (!Number.isFinite(rating) || rating <= 0) return '';
     const clamped = Math.max(0, Math.min(5, rating));
     const stars = Array.from({ length: 5 }, (_, index) => {
@@ -392,10 +392,15 @@ function renderStarRating(rating) {
             </span>`;
     }).join('');
 
+    const count = Number(ratingsCount);
+    const countHtml = count > 0
+        ? `&emsp;<span class="opacity-50 fw-normal">(${count.toLocaleString()})</span>`
+        : '';
+
     return `
         <div class="hardcover-rating d-flex align-items-center gap-1 text-body-secondary">
             <span class="d-inline-flex" role="img" aria-label="${clamped.toFixed(1)} out of 5 stars">${stars}</span>
-            <span class="fw-medium">${clamped.toFixed(1)}</span>
+            <span class="fw-medium">${clamped.toFixed(1)}${countHtml}</span>
         </div>`;
 }
 
@@ -423,7 +428,7 @@ function renderHardcoverMetadata(enrichment) {
     const rating = Number(metadata.rating);
     const yearText = metadata.release_year ? ` | ${escapeHtml(metadata.release_year)}` : '';
     const seriesText = series ? `<div class="text-truncate"><i class="bi bi-collection me-1"></i>${escapeHtml(series)}</div>` : '';
-    const ratingRow = renderStarRating(rating);
+    const ratingRow = renderStarRating(rating, metadata.ratings_count);
     const compilationText = metadata.compilation ? '<span class="badge text-bg-secondary ms-1">Compilation</span>' : '';
     const url = hardcoverUrl(metadata);
     const tagName = url ? 'a' : 'div';
@@ -467,7 +472,7 @@ function renderBookDetailsHardcover(enrichment) {
         const ratingRow = document.getElementById('detail-hc-rating-row');
         const ratingEl = document.getElementById('detail-hc-rating');
         if (hasRating) {
-            ratingEl.innerHTML = renderStarRating(rating);
+            ratingEl.innerHTML = renderStarRating(rating, metadata.ratings_count);
             ratingRow.style.display = '';
         } else {
             ratingRow.style.display = 'none';
@@ -507,7 +512,7 @@ function renderBookDetailsHardcover(enrichment) {
         }
 
         if (heroRating) {
-            heroRating.innerHTML = hasRating ? renderStarRating(rating) : '';
+            heroRating.innerHTML = hasRating ? renderStarRating(rating, metadata.ratings_count) : '';
             heroRating.classList.toggle('d-none', !hasRating);
         }
         if (heroYear) {

@@ -91,6 +91,7 @@ class HardcoverClient:
           title
           slug
           rating
+          ratings_count
           release_year
           compilation
         }
@@ -111,6 +112,7 @@ class HardcoverClient:
           title
           slug
           rating
+          ratings_count
           release_year
           compilation
         }
