@@ -5450,6 +5450,7 @@ function initAutosuggest(inputId) {
     if (isMainSearchInput) {
         container.classList.add('autosuggest-results--above');
     }
+    container.style.display = 'none';
     input.parentNode.appendChild(container);
 
     // State management for cancellation
@@ -5850,6 +5851,12 @@ function initAutosuggest(inputId) {
 
     // 1. Input: Debounce the search
     input.addEventListener('input', (e) => {
+        // Only trigger autosuggest if the input is currently focused by the user.
+        // This prevents it from opening on page load if the URL has a pre-filled query.
+        if (document.activeElement !== input) {
+            return;
+        }
+
         clearTimeout(debounceTimer); // Clear previous timer
         const val = e.target.value.trim();
         if (!val) {
