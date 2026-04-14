@@ -447,6 +447,76 @@ function renderHardcoverMetadata(enrichment) {
         </${tagName}>`;
 }
 
+function renderBookDetailsHardcover(enrichment) {
+    const card = document.getElementById('detail-hardcover-card');
+    const heroInfo = document.getElementById('detail-hero-hc-info');
+
+    const metadata = enrichment?.hardcover;
+    if (!metadata) {
+        if (card) card.style.display = 'none';
+        if (heroInfo) heroInfo.classList.add('d-none');
+        return;
+    }
+
+    const rating = Number(metadata.rating);
+    const hasRating = Number.isFinite(rating) && rating > 0;
+    const hasYear = !!metadata.release_year;
+
+    // --- Sidebar card ---
+    if (card) {
+        const ratingRow = document.getElementById('detail-hc-rating-row');
+        const ratingEl = document.getElementById('detail-hc-rating');
+        if (hasRating) {
+            ratingEl.innerHTML = renderStarRating(rating);
+            ratingRow.style.display = '';
+        } else {
+            ratingRow.style.display = 'none';
+        }
+
+        const yearRow = document.getElementById('detail-hc-year-row');
+        const yearEl = document.getElementById('detail-hc-year');
+        if (hasYear) {
+            yearEl.textContent = metadata.release_year;
+            yearRow.style.display = '';
+        } else {
+            yearRow.style.display = 'none';
+        }
+
+        const linkContainer = document.getElementById('detail-hc-link-container');
+        if (linkContainer) {
+            const url = hardcoverUrl(metadata);
+            linkContainer.innerHTML = url
+                ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-secondary w-100">View on Hardcover <i class="bi bi-box-arrow-up-right ms-1"></i></a>`
+                : '';
+        }
+
+        card.style.display = '';
+    }
+
+    // --- Hero area ---
+    if (heroInfo) {
+        const heroRating = document.getElementById('detail-hero-hc-rating');
+        const heroYear = document.getElementById('detail-hero-hc-year');
+
+        if (heroRating) {
+            heroRating.innerHTML = hasRating ? renderStarRating(rating) : '';
+            heroRating.classList.toggle('d-none', !hasRating);
+        }
+        if (heroYear) {
+            heroYear.textContent = hasYear ? `Published ${metadata.release_year}` : '';
+            heroYear.classList.toggle('d-none', !hasYear);
+        }
+
+        if (hasRating || hasYear) {
+            heroInfo.classList.remove('d-none');
+            heroInfo.classList.add('d-flex');
+        } else {
+            heroInfo.classList.add('d-none');
+            heroInfo.classList.remove('d-flex');
+        }
+    }
+}
+
 function updateHardcoverEnrichment(payload) {
     const torrentId = String(payload?.torrent_id || '');
     const searchId = String(payload?.search_id || '');
@@ -478,6 +548,12 @@ function updateHardcoverEnrichment(payload) {
             thumb.dataset.triedHardcoverCover = 'true';
             thumb.src = `/proxy_thumbnail?url=${encodeURIComponent(coverUrl)}`;
         }
+    }
+
+    // If the book details modal is open for this torrent, update its Hardcover section live
+    const bookModalEl = document.getElementById('bookDetailsModal');
+    if (bookModalEl && bookModalEl.classList.contains('show') && bookModalEl.dataset.currentTorrentId === torrentId) {
+        renderBookDetailsHardcover(enrichment);
     }
 }
 
@@ -4981,8 +5057,20 @@ document.addEventListener("DOMContentLoaded", async function () {
         heroBg.style.transform = 'scale(1.2)';
         heroBg.style.opacity = '0.5';
 
-        // 3. Attach Error Handler
-        activeImgEl.onerror = function () { handleBookCoverError(this); };
+        // 3. Attach Error Handler — try Hardcover cover before falling back to placeholder
+        const hcCoverProxy = data.hardcover_enrichment?.hardcover?.cover_image
+            ? `/proxy_thumbnail?url=${encodeURIComponent(data.hardcover_enrichment.hardcover.cover_image)}`
+            : null;
+        activeImgEl.onerror = function () {
+            if (hcCoverProxy && !this.dataset.triedHardcoverCover) {
+                this.dataset.triedHardcoverCover = 'true';
+                this.src = hcCoverProxy;
+                const bg = document.getElementById('detail-hero-bg');
+                if (bg) bg.style.backgroundImage = `url('${hcCoverProxy}')`;
+            } else {
+                handleBookCoverError(this);
+            }
+        };
 
         // 4. Set Initial State
         activeImgEl.src = lowResSrc;
@@ -5082,6 +5170,13 @@ document.addEventListener("DOMContentLoaded", async function () {
                 modalStatusContainer.innerHTML = rowStatus.innerHTML;
             }
         }
+
+        // Track which torrent is open so live enrichment updates can target the modal
+        const bookModalEl = document.getElementById('bookDetailsModal');
+        if (bookModalEl) bookModalEl.dataset.currentTorrentId = String(data.id || '');
+
+        // Render Hardcover enrichment card (may already be available or arrive later via SSE)
+        renderBookDetailsHardcover(data.hardcover_enrichment);
     }
 
     // Confirm Download Modal Action

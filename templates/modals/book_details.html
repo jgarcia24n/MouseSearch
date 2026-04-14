@@ -35,7 +35,11 @@
                     id="detail-subtitle"></div>
 
                   <div class="mb-1"><strong>By:</strong> <span id="detail-authors">---</span></div>
-                  <div class="mb-3"><strong>Narrated by:</strong> <span id="detail-narrators">---</span></div>
+                  <div class="mb-2"><strong>Narrated by:</strong> <span id="detail-narrators">---</span></div>
+                  <div id="detail-hero-hc-info" class="d-none flex-column gap-1 mb-3 small">
+                    <div id="detail-hero-hc-rating" class="d-none"></div>
+                    <div id="detail-hero-hc-year" class="d-none opacity-75"></div>
+                  </div>
                   <div id="full" class="badge-container justify-content-center justify-content-md-start gap-1"
                     style="text-shadow:none;">
                     <span id="badge-downloaded" class="badge bg-success d-none"
@@ -147,6 +151,26 @@
                       <span class="fw-bold text-danger text-end" id="detail-leechers">0</span>
                     </li>
                   </ul>
+                </div>
+              </div>
+
+              <div class="card mb-4" id="detail-hardcover-card" style="display: none;">
+                <div class="card-header d-flex align-items-center gap-2">
+                  <img src="https://hardcover.app/logo.svg" alt="" style="width: 1rem; height: 1rem; object-fit: contain;" loading="lazy">
+                  <h5 class="my-2 text-body-emphasis">Hardcover</h5>
+                </div>
+                <div class="card-body">
+                  <ul class="list-unstyled mb-0 d-grid gap-2 small">
+                    <li class="d-flex justify-content-between align-items-center" id="detail-hc-rating-row">
+                      <span class="text-body-secondary">Rating:</span>
+                      <span id="detail-hc-rating" class="fw-medium text-end"></span>
+                    </li>
+                    <li class="d-flex justify-content-between" id="detail-hc-year-row">
+                      <span class="text-body-secondary">Published:</span>
+                      <span class="fw-medium text-body-emphasis text-end" id="detail-hc-year"></span>
+                    </li>
+                  </ul>
+                  <div class="mt-2" id="detail-hc-link-container"></div>
                 </div>
               </div>
 

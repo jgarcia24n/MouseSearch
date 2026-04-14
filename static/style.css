@@ -567,6 +567,24 @@ a.hardcover-match:focus-visible {
     min-width: 0;
 }
 
+/* Hardcover info block in the book detail hero */
+#detail-hero-hc-info {
+    align-items: center; /* mirrors text-center on mobile */
+}
+@media (min-width: 768px) {
+    #detail-hero-hc-info {
+        align-items: flex-start; /* mirrors text-md-start */
+    }
+}
+/* Star rating sits inside a d-flex, so override text-body-secondary to suit the white hero */
+#detail-hero-hc-info .hardcover-rating {
+    color: rgba(255, 255, 255, 0.85) !important;
+}
+/* Empty-star spans use text-body-secondary — make them ghost-white instead of dark */
+#detail-hero-hc-info .hardcover-star .text-body-secondary {
+    color: rgba(255, 255, 255, 0.3) !important;
+}
+
 /* Ensure the image container stands out slightly in both modes */
 .img-container-adaptive {
     background-color: var(--bs-body-tertiary);
