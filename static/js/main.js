@@ -409,13 +409,18 @@ function renderHardcoverMetadata(enrichment) {
 
     if (!metadata) {
         const reason = enrichment?.failure_reason || 'unresolved';
+        let displayMessage = 'No match';
+        if (reason === 'http_401' || reason === 'http_403') {
+            displayMessage = 'Auth error';
+        }
+        
         return `
             <div class="detail-hero-hc-card d-inline-flex flex-column gap-1 text-decoration-none pe-none opacity-50">
                 <div class="d-flex align-items-center gap-1" style="font-size: 0.7rem;">
                     <img src="${HARDCOVER_LOGO_URL}" alt="" style="width: 0.8rem; height: 0.8rem; object-fit: contain;" loading="lazy">
                     <span class="text-uppercase fw-semibold" style="letter-spacing: 0.05em;">Hardcover</span>
                 </div>
-                <div style="font-size: 0.8rem;">No match</div>
+                <div style="font-size: 0.8rem;">${displayMessage}</div>
             </div>`;
     }
 
