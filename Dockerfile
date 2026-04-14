@@ -18,6 +18,7 @@ COPY app.py ./
 COPY static ./static
 COPY templates ./templates
 COPY clients ./clients
+COPY hardcover ./hardcover
 
 COPY version.txt ./version.txt
 

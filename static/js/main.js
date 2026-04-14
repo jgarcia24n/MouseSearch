@@ -11,6 +11,7 @@ const redXIcon = `<img src="/static/icons/x_circle.svg" alt="not connected" styl
 // Global State
 const torrentHashMap = {};
 const hashToElementMap = new Map();
+const hardcoverEnrichmentPollers = new Map();
 let lastClientStatus = null;
 let lastPerformedQuery = null;
 window.currentVipUntil = null;
@@ -30,6 +31,7 @@ const AUTOSUGGEST_CACHE_MAX_ENTRIES = 300;
 const AUTOSUGGEST_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const autosuggestCache = window.__autosuggestCache instanceof Map ? window.__autosuggestCache : new Map();
 window.__autosuggestCache = autosuggestCache;
+const HARDCOVER_LOGO_URL = 'https://hardcover.app/logo.svg';
 const UPLOAD_AMOUNT_STEP = 50;
 const UPLOAD_AMOUNT_MIN = 50;
 const UPLOAD_AMOUNT_MAX = 200;
@@ -301,6 +303,258 @@ function formatDuration(seconds) {
     return result.slice(0, 2).join(' ');
 }
 
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    }[char]));
+}
+
+function arrayFromValue(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) return value.filter(Boolean);
+    if (typeof value === 'object') return Object.values(value).filter(Boolean);
+    return [value];
+}
+
+function updateResultJsonData(resultItem, patch) {
+    if (!resultItem) return;
+    let data = {};
+    try {
+        data = JSON.parse(resultItem.dataset.json || '{}');
+    } catch (_) {
+        data = {};
+    }
+    resultItem.dataset.json = JSON.stringify({ ...data, ...patch });
+}
+
+function hardcoverCoverUrlFromResultItem(resultItem) {
+    if (!resultItem) return '';
+    try {
+        const data = JSON.parse(resultItem.dataset.json || '{}');
+        return data?.hardcover_enrichment?.hardcover?.cover_image || '';
+    } catch (_) {
+        return '';
+    }
+}
+
+function handleResultThumbnailError(imgElement) {
+    if (!imgElement) return;
+    const resultItem = imgElement.closest('.result-item');
+    const hardcoverCoverUrl = hardcoverCoverUrlFromResultItem(resultItem);
+    if (hardcoverCoverUrl && imgElement.dataset.triedHardcoverCover !== 'true') {
+        imgElement.dataset.triedHardcoverCover = 'true';
+        if (resultItem) resultItem.dataset.hasMamCover = 'false';
+        imgElement.src = `/proxy_thumbnail?url=${encodeURIComponent(hardcoverCoverUrl)}`;
+        return;
+    }
+
+    imgElement.onerror = null;
+    imgElement.src = '/static/icons/no_cover.png';
+}
+
+window.handleResultThumbnailError = handleResultThumbnailError;
+
+function hardcoverUrl(metadata) {
+    const slug = String(metadata?.slug || '').trim();
+    if (!slug) return '';
+    const rawPath = String(metadata?.url_path || '').trim().toLowerCase();
+    const objectType = String(metadata?.object_type || '').trim().toLowerCase();
+    const path = ['books', 'series', 'authors'].includes(rawPath)
+        ? rawPath
+        : objectType === 'series'
+            ? 'series'
+            : objectType === 'author'
+                ? 'authors'
+                : 'books';
+    return `https://hardcover.app/${path}/${encodeURIComponent(slug)}`;
+}
+
+function renderStarRating(rating) {
+    if (!Number.isFinite(rating) || rating <= 0) return '';
+    const clamped = Math.max(0, Math.min(5, rating));
+    const stars = Array.from({ length: 5 }, (_, index) => {
+        const fill = Math.max(0, Math.min(1, clamped - index)) * 100;
+        return `
+            <span class="hardcover-star position-relative d-inline-block" aria-hidden="true"
+                style="width: 1em; height: 1em; line-height: 1;">
+                <span class="text-body-secondary opacity-50">★</span>
+                <span class="position-absolute top-0 start-0 overflow-hidden text-warning"
+                    style="width: ${fill.toFixed(0)}%;">★</span>
+            </span>`;
+    }).join('');
+
+    return `
+        <div class="hardcover-rating d-flex align-items-center gap-1 text-body-secondary">
+            <span class="d-inline-flex" role="img" aria-label="${clamped.toFixed(1)} out of 5 stars">${stars}</span>
+            <span class="fw-medium">${clamped.toFixed(1)}</span>
+        </div>`;
+}
+
+function renderHardcoverMetadata(enrichment) {
+    const metadata = enrichment?.hardcover;
+    const path = enrichment?.query_path || 'unresolved';
+    const score = Number(enrichment?.match_score || 0);
+    const logoHtml = `<img src="${HARDCOVER_LOGO_URL}" alt="Hardcover" class="hardcover-logo-icon me-1" loading="lazy" style="width: 1rem; height: 1rem; object-fit: contain;">`;
+
+    if (!metadata) {
+        const reason = enrichment?.failure_reason || 'unresolved';
+        return `
+            <div class="text-body-secondary d-flex align-items-center">
+                ${logoHtml}
+                Hardcover: no confident match
+                <span class="opacity-75">(${escapeHtml(reason)}, score ${score.toFixed(1)})</span>
+            </div>`;
+    }
+
+    const authors = arrayFromValue(metadata.authors).join(', ');
+    const series = arrayFromValue(metadata.series_names).join(', ');
+    const rating = Number(metadata.rating);
+    const yearText = metadata.release_year ? ` | ${escapeHtml(metadata.release_year)}` : '';
+    const seriesText = series ? `<div class="text-truncate"><i class="bi bi-collection me-1"></i>${escapeHtml(series)}</div>` : '';
+    const ratingRow = renderStarRating(rating);
+    const compilationText = metadata.compilation ? '<span class="badge text-bg-secondary ms-1">Compilation</span>' : '';
+    const url = hardcoverUrl(metadata);
+    const tagName = url ? 'a' : 'div';
+    const linkAttrs = url
+        ? `href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"`
+        : '';
+
+    return `
+        <${tagName} class="hardcover-match d-block text-decoration-none text-reset" ${linkAttrs}>
+            <div class="d-flex align-items-center gap-1 text-body-emphasis">
+                ${logoHtml}
+                <span class="fw-semibold text-truncate">${escapeHtml(metadata.title || 'Hardcover match')}</span>
+                ${compilationText}
+            </div>
+            <div class="text-body-secondary text-truncate">
+                ${authors ? `<i class="bi bi-person-lines-fill me-1"></i>${escapeHtml(authors)}` : 'Hardcover metadata'}
+                ${yearText}
+                <span class="opacity-75"> | ${escapeHtml(path)} | ${score.toFixed(1)}</span>
+            </div>
+            ${ratingRow}
+            ${seriesText}
+        </${tagName}>`;
+}
+
+function updateHardcoverEnrichment(payload) {
+    const torrentId = String(payload?.torrent_id || '');
+    const searchId = String(payload?.search_id || '');
+    const enrichment = payload?.enrichment;
+    if (!torrentId || !enrichment) return;
+
+    const escapedTorrentId = window.CSS && CSS.escape
+        ? CSS.escape(torrentId)
+        : torrentId.replace(/["\\]/g, '\\$&');
+    const resultItem = document.querySelector(`.result-item[data-torrent-id="${escapedTorrentId}"]`);
+    if (!resultItem) return;
+    if (searchId && resultItem.dataset.searchId && resultItem.dataset.searchId !== searchId) return;
+
+    resultItem.dataset.hardcoverState = enrichment.hardcover ? 'matched' : 'unresolved';
+    resultItem.dataset.hardcoverScore = String(enrichment.match_score || 0);
+    resultItem.dataset.hardcoverPath = enrichment.query_path || '';
+    updateResultJsonData(resultItem, { hardcover_enrichment: enrichment });
+
+    const container = resultItem.querySelector('[data-hardcover-container]');
+    if (container) {
+        container.innerHTML = renderHardcoverMetadata(enrichment);
+    }
+
+    const coverUrl = enrichment?.hardcover?.cover_image;
+    const hasMamCover = resultItem.dataset.hasMamCover === 'true';
+    if (coverUrl && !hasMamCover) {
+        const thumb = resultItem.querySelector('.results-thumb');
+        if (thumb) {
+            thumb.dataset.triedHardcoverCover = 'true';
+            thumb.src = `/proxy_thumbnail?url=${encodeURIComponent(coverUrl)}`;
+        }
+    }
+}
+
+function pendingHardcoverSearchIds(scope = document) {
+    const ids = new Set();
+    scope.querySelectorAll('.result-item[data-hardcover-state="pending"][data-search-id]').forEach(item => {
+        const searchId = String(item.dataset.searchId || '').trim();
+        if (searchId) ids.add(searchId);
+    });
+    return [...ids];
+}
+
+function hasPendingHardcoverRows(searchId) {
+    const escapedSearchId = window.CSS && CSS.escape
+        ? CSS.escape(searchId)
+        : String(searchId).replace(/["\\]/g, '\\$&');
+    return !!document.querySelector(`.result-item[data-search-id="${escapedSearchId}"][data-hardcover-state="pending"]`);
+}
+
+function markPendingHardcoverRows(searchId, reason = 'enrichment_unavailable') {
+    const escapedSearchId = window.CSS && CSS.escape
+        ? CSS.escape(searchId)
+        : String(searchId).replace(/["\\]/g, '\\$&');
+    document.querySelectorAll(`.result-item[data-search-id="${escapedSearchId}"][data-hardcover-state="pending"]`).forEach(item => {
+        updateHardcoverEnrichment({
+            search_id: searchId,
+            torrent_id: item.dataset.torrentId,
+            enrichment: {
+                hardcover: null,
+                match_score: 0,
+                query_path: 'failed',
+                failure_reason: reason
+            }
+        });
+    });
+}
+
+function stopHardcoverEnrichmentPolling() {
+    hardcoverEnrichmentPollers.forEach(timerId => clearInterval(timerId));
+    hardcoverEnrichmentPollers.clear();
+}
+
+async function pollHardcoverEnrichment(searchId) {
+    try {
+        const response = await fetch(`/hardcover/enrichment/${encodeURIComponent(searchId)}`, {
+            cache: 'no-store'
+        });
+        if (!response.ok) throw new Error(`Hardcover poll HTTP ${response.status}`);
+
+        const data = await response.json();
+        const results = Array.isArray(data.results) ? data.results : [];
+        results.forEach(item => {
+            updateHardcoverEnrichment({
+                event: 'hardcover-enrichment',
+                search_id: data.search_id || searchId,
+                torrent_id: item.torrent_id,
+                index: item.index,
+                enrichment: item.enrichment
+            });
+        });
+
+        if (data.completed && hasPendingHardcoverRows(searchId)) {
+            markPendingHardcoverRows(searchId, data.error || 'no_enrichment_result');
+        }
+
+        if (data.completed || !hasPendingHardcoverRows(searchId)) {
+            const timerId = hardcoverEnrichmentPollers.get(searchId);
+            if (timerId) clearInterval(timerId);
+            hardcoverEnrichmentPollers.delete(searchId);
+        }
+    } catch (error) {
+        console.warn('[HARDCOVER] Polling failed:', error);
+    }
+}
+
+function startHardcoverEnrichmentPolling(scope = document) {
+    pendingHardcoverSearchIds(scope).forEach(searchId => {
+        if (hardcoverEnrichmentPollers.has(searchId)) return;
+        pollHardcoverEnrichment(searchId);
+        const timerId = setInterval(() => pollHardcoverEnrichment(searchId), 1000);
+        hardcoverEnrichmentPollers.set(searchId, timerId);
+    });
+}
+
 /**
  * Converts UTC strings to the user's local date (No Time).
  */
@@ -518,6 +772,9 @@ function initializeEventStream() {
                         window.currentBonusPoints = parseFloat(userData.seedbonus || 0);
                         updateMaxUploadPurchaseDisplay();
                     }
+                    break;
+                case 'hardcover-enrichment':
+                    updateHardcoverEnrichment(data);
                     break;
                 case 'vip_purchase':
                     if (data.success) {
@@ -4078,6 +4335,7 @@ document.addEventListener("DOMContentLoaded", async function () {
             }
         }
         hashToElementMap.clear();
+        stopHardcoverEnrichmentPolling();
         const searchUrl = queryString ? `/mam/search?${queryString}` : '/mam/search';
 
         if (preScrollToResults && wrapper) {
@@ -4116,6 +4374,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                 refreshCategories();
                 initializeSnatchedTorrents();
                 applyHideDownloadedResultsFilter();
+                startHardcoverEnrichmentPolling(resultsContainer);
             })
             .catch(error => {
                 const errorText = error?.message ? `Search failed: ${error.message}` : 'Search failed.';

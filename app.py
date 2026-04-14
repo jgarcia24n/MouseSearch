@@ -41,6 +41,8 @@ RAPIDFUZZ_AVAILABLE = fuzz is not None
 
 from clients import get_torrent_client, get_client_display_name, get_available_clients
 from hashing import calculate_torrent_hash_from_url, calculate_torrent_hash_from_bytes
+from hardcover.client import HardcoverClient
+from hardcover.resolver import HardcoverBatchRunner, HardcoverEnrichmentConfig, HardcoverResolver
 
 # --- SCHEDULER AND STATE SETUP ---
 app = Quart(__name__)
@@ -65,6 +67,8 @@ pending_mid_resolutions = {}  # Maps MID -> {"added_at": timestamp, "metadata": 
 
 # --- SSE Globals ---
 connected_websockets = set() 
+hardcover_enrichment_batches = {}
+HARDCOVER_ENRICHMENT_BATCH_TTL_SECONDS = 10 * 60
 
 # --- RATE LIMITING HELPER ---
 class LeakyBucket:
@@ -971,6 +975,13 @@ FALLBACK_CONFIG = {
     "THUMBNAIL_CACHE_MAX_SIZE_MB": 500,
     "MAX_SEARCH_RESULTS": 50,
     "MAX_AUTOCOMPLETE_RESULTS": 20,
+    "HARDCOVER_ENRICHMENT_ENABLED": True,
+    "HARDCOVER_API_TOKEN": "",
+    "HARDCOVER_API_URL": "https://api.hardcover.app/v1/graphql",
+    "HARDCOVER_USER_AGENT": "MouseSearch Hardcover Enrichment",
+    "HARDCOVER_MATCH_THRESHOLD": 78.0,
+    "HARDCOVER_CONCURRENCY": 6,
+    "HARDCOVER_SEARCH_PER_PAGE": 5,
     "RESULTS_DISPLAY_FIELDS": ["narrator", "series", "file_size", "file_type", "seeders"],
     "SEARCH_FILTER_DEFAULTS": copy.deepcopy(DEFAULT_SEARCH_FILTER_DEFAULTS),
 }
@@ -1165,6 +1176,8 @@ def load_config():
         "THUMBNAIL_CACHE_MAX_SIZE_MB",
         "MAX_SEARCH_RESULTS",
         "MAX_AUTOCOMPLETE_RESULTS",
+        "HARDCOVER_CONCURRENCY",
+        "HARDCOVER_SEARCH_PER_PAGE",
     ]:
         try:
             config[key] = int(config[key])
@@ -1175,6 +1188,10 @@ def load_config():
         config["MAX_SEARCH_RESULTS"] = FALLBACK_CONFIG["MAX_SEARCH_RESULTS"]
     if config["MAX_AUTOCOMPLETE_RESULTS"] <= 0:
         config["MAX_AUTOCOMPLETE_RESULTS"] = FALLBACK_CONFIG["MAX_AUTOCOMPLETE_RESULTS"]
+    if config["HARDCOVER_CONCURRENCY"] <= 0:
+        config["HARDCOVER_CONCURRENCY"] = FALLBACK_CONFIG["HARDCOVER_CONCURRENCY"]
+    if config["HARDCOVER_SEARCH_PER_PAGE"] <= 0:
+        config["HARDCOVER_SEARCH_PER_PAGE"] = FALLBACK_CONFIG["HARDCOVER_SEARCH_PER_PAGE"]
 
     # Floats
     for key in [
@@ -1184,7 +1201,8 @@ def load_config():
         "AUTO_BUY_UPLOAD_BUFFER_AMOUNT",
         "AUTO_BUY_UPLOAD_BONUS_THRESHOLD",
         "AUTO_BUY_UPLOAD_BONUS_AMOUNT",
-        "AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_MB"
+        "AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_MB",
+        "HARDCOVER_MATCH_THRESHOLD"
     ]:
         try:
             config[key] = float(config[key])
@@ -1213,7 +1231,8 @@ def load_config():
         "AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD",
         "AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_ENABLED",
         "ENABLE_FILESYSTEM_THUMBNAIL_CACHE",
-        "RTORRENT_DIGEST_AUTH"
+        "RTORRENT_DIGEST_AUTH",
+        "HARDCOVER_ENRICHMENT_ENABLED"
     ]:
         config[key] = coerce_bool(config.get(key), FALLBACK_CONFIG[key])
         val = config[key]
@@ -3839,6 +3858,136 @@ def format_mam_search_error(exc: Exception) -> str:
         return f"MAM search failed: {detail}"
     return "MAM search failed due to an unexpected error."
 
+
+def hardcover_enrichment_is_active() -> bool:
+    token = str(app.config.get("HARDCOVER_API_TOKEN") or "").strip()
+    return bool(app.config.get("HARDCOVER_ENRICHMENT_ENABLED", True) and token)
+
+
+def prune_hardcover_enrichment_batches() -> None:
+    cutoff = time.time() - HARDCOVER_ENRICHMENT_BATCH_TTL_SECONDS
+    expired = [
+        search_id for search_id, batch in hardcover_enrichment_batches.items()
+        if float(batch.get("updated_at") or batch.get("created_at") or 0) < cutoff
+    ]
+    for search_id in expired:
+        hardcover_enrichment_batches.pop(search_id, None)
+
+
+def initialize_hardcover_enrichment_batch(search_id: str, total: int) -> None:
+    prune_hardcover_enrichment_batches()
+    now = time.time()
+    hardcover_enrichment_batches[search_id] = {
+        "created_at": now,
+        "updated_at": now,
+        "completed": False,
+        "total": int(total),
+        "results": {},
+    }
+
+
+def store_hardcover_enrichment_result(search_id: str, index: int, torrent_id: str, enrichment: dict) -> None:
+    batch = hardcover_enrichment_batches.get(search_id)
+    if batch is None:
+        initialize_hardcover_enrichment_batch(search_id, 0)
+        batch = hardcover_enrichment_batches[search_id]
+
+    batch["updated_at"] = time.time()
+    batch["results"][torrent_id] = {
+        "index": index,
+        "torrent_id": torrent_id,
+        "enrichment": enrichment,
+    }
+
+
+async def run_hardcover_enrichment_batch(search_id: str, results: list[dict]):
+    if not hardcover_enrichment_is_active():
+        return
+
+    token = str(app.config.get("HARDCOVER_API_TOKEN") or "").strip()
+    endpoint = str(app.config.get("HARDCOVER_API_URL") or FALLBACK_CONFIG["HARDCOVER_API_URL"]).strip()
+    user_agent = str(app.config.get("HARDCOVER_USER_AGENT") or FALLBACK_CONFIG["HARDCOVER_USER_AGENT"]).strip()
+    threshold = float(app.config.get("HARDCOVER_MATCH_THRESHOLD", FALLBACK_CONFIG["HARDCOVER_MATCH_THRESHOLD"]))
+    concurrency = int(app.config.get("HARDCOVER_CONCURRENCY", FALLBACK_CONFIG["HARDCOVER_CONCURRENCY"]))
+    per_page = int(app.config.get("HARDCOVER_SEARCH_PER_PAGE", FALLBACK_CONFIG["HARDCOVER_SEARCH_PER_PAGE"]))
+
+    client = HardcoverClient(
+        token,
+        endpoint=endpoint,
+        user_agent=user_agent,
+        timeout_seconds=30.0,
+        rate_limit=60,
+    )
+    resolver = HardcoverResolver(
+        client,
+        HardcoverEnrichmentConfig(
+            match_threshold=threshold,
+            concurrency=concurrency,
+            per_page=per_page,
+        ),
+    )
+    runner = HardcoverBatchRunner(resolver, concurrency)
+
+    async def publish(index: int, result: dict, enrichment: dict):
+        torrent_id = str(result.get("id") or "")
+        if not torrent_id:
+            return
+        store_hardcover_enrichment_result(search_id, index, torrent_id, enrichment)
+        payload = {
+            "event": "hardcover-enrichment",
+            "search_id": search_id,
+            "torrent_id": torrent_id,
+            "index": index,
+            "enrichment": enrichment,
+        }
+        await broadcast_payload(payload)
+
+    started = time.monotonic()
+    try:
+        async with client:
+            await runner.run(results, publish)
+        batch = hardcover_enrichment_batches.get(search_id)
+        if batch is not None:
+            batch["completed"] = True
+            batch["updated_at"] = time.time()
+        app.logger.info(
+            f"[HARDCOVER] search_id={search_id} enriched={len(results)} "
+            f"duration_ms={(time.monotonic() - started) * 1000:.1f}"
+        )
+    except Exception as e:
+        batch = hardcover_enrichment_batches.get(search_id)
+        if batch is not None:
+            batch["completed"] = True
+            batch["updated_at"] = time.time()
+            batch["error"] = str(e)
+        app.logger.error(f"[HARDCOVER] Batch failed search_id={search_id}: {e}", exc_info=True)
+
+
+@app.route('/hardcover/enrichment/<search_id>', methods=['GET'])
+async def hardcover_enrichment_status(search_id):
+    prune_hardcover_enrichment_batches()
+    batch = hardcover_enrichment_batches.get(str(search_id or ""))
+    if not batch:
+        return jsonify({
+            "search_id": search_id,
+            "completed": False,
+            "total": 0,
+            "results": [],
+        })
+
+    results = sorted(
+        batch.get("results", {}).values(),
+        key=lambda item: int(item.get("index", 0)),
+    )
+    return jsonify({
+        "search_id": search_id,
+        "completed": bool(batch.get("completed")),
+        "total": int(batch.get("total") or 0),
+        "results": results,
+        "error": batch.get("error", ""),
+    })
+
+
 @app.route('/mam/search', methods=['GET'])
 async def mam_search():
     if not await login_mam(): 
@@ -3852,6 +4001,7 @@ async def mam_search():
         )
     query = request.args.get("query", "").strip()
     search_started_at = time.monotonic()
+    search_id = uuid.uuid4().hex[:12]
 
     # Used by templates to decide whether VIP Freeleech applies (fl_vip).
     is_vip_active = False
@@ -4008,9 +4158,13 @@ async def mam_search():
                 if not item.get('thumbnail'):
                     if item.get('id'):
                         item['thumbnail'] = f"https://cdn.myanonamouse.net/t/p/small/{item['id']}.webp"
+                        item["has_mam_cover"] = True
                     else:
                         cat = item.get('category', '')
                         item['thumbnail'] = f"https://static.myanonamouse.net/pic/cats/3/{cat}.png"
+                        item["has_mam_cover"] = False
+                else:
+                    item["has_mam_cover"] = True
 
                 # 3. Decode Metadata (Author, Narrator, Series)
                 # Note: rank_results may have already partially parsed these into strings.
@@ -4087,9 +4241,11 @@ async def mam_search():
                 f"scope={params.get('tor[searchIn]', 'torrents')} duration_ms={search_duration_ms:.1f}"
             )
             
-            return await render_template(
+            rendered_results = await render_template(
                 "partials/results.html",
                 results=display_results,
+                search_id=search_id,
+                HARDCOVER_ENRICHMENT_ACTIVE=hardcover_enrichment_is_active(),
                 CLIENT_STATUS="CONNECTED" if client_connected else "NOT CONNECTED",
                 categories=categories,
                 TORRENT_CLIENT_CATEGORY=app.config.get("TORRENT_CLIENT_CATEGORY", ""),
@@ -4104,6 +4260,14 @@ async def mam_search():
                     FALLBACK_CONFIG["RESULTS_DISPLAY_FIELDS"]
                 ),
             )
+            if display_results and hardcover_enrichment_is_active():
+                initialize_hardcover_enrichment_batch(search_id, len(display_results))
+                app.add_background_task(
+                    run_hardcover_enrichment_batch,
+                    search_id,
+                    copy.deepcopy(display_results),
+                )
+            return rendered_results
     except Exception as e:
         error_message = format_mam_search_error(e)
         app.logger.error(

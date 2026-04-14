@@ -309,3 +309,4 @@ dist
 .pnp.*
 CHANGELOG.md
 forum_post.html
+.env.bak
