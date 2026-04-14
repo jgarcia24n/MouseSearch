@@ -729,6 +729,19 @@ a.hardcover-match:focus-visible {
     transition: background-color 0.15s ease-in-out;
 }
 
+/* Keyboard-navigation highlight — must override the dark-mode bg rule above */
+.autosuggest-results .list-group-item.active {
+    background-color: var(--bs-list-group-active-bg);
+    color: var(--bs-list-group-active-color);
+    border-color: var(--bs-list-group-active-border-color);
+    z-index: 2;
+}
+[data-bs-theme="dark"] .autosuggest-results .list-group-item.active {
+    background-color: var(--bs-list-group-active-bg);
+    color: var(--bs-list-group-active-color);
+    border-color: var(--bs-list-group-active-border-color);
+}
+
 /* Ensure the flexbox works nicely with the badge */
 .autosuggest-results .list-group-item .flex-grow-1 {
     min-width: 0; /* Allows text truncation to work inside flex child */

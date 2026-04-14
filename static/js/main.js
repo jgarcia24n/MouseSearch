@@ -5457,6 +5457,8 @@ function initAutosuggest(inputId) {
     let abortController = null;
     let cacheProbeController = null;
     let hasIssuedInitialSearch = false;
+    let activeIndex = -1;
+    let originalInputValue = '';
     const MIN_AUTOSUGGEST_LENGTH = 3;
     const INITIAL_AUTOSUGGEST_TRIGGER_LENGTH = 5;
 
@@ -5619,6 +5621,7 @@ function initAutosuggest(inputId) {
         document.querySelectorAll('.autosuggest-results').forEach((el) => {
             el.style.display = 'none';
         });
+        activeIndex = -1;
     };
 
     const isContainerVisibleInViewport = () => {
@@ -5662,6 +5665,8 @@ function initAutosuggest(inputId) {
 
     const renderSuggestions = (data, val) => {
         container.innerHTML = '';
+        activeIndex = -1;
+        originalInputValue = input.value.trim();
 
         if (!Array.isArray(data) || data.length === 0) {
             container.style.display = 'none';
@@ -5675,6 +5680,7 @@ function initAutosuggest(inputId) {
 
             const primaryType = item.primary_type || 'title';
             const primaryText = item.primary_text || item.title || item.author || item.series || '';
+            a.dataset.primaryText = primaryText;
             const authorText = String(item.author_text || '').trim();
             const showAuthorText = (primaryType === 'title' || primaryType === 'series') && authorText.length > 0;
             const badgeClass = getTypeBadgeClass(primaryType);
@@ -5825,6 +5831,21 @@ function initAutosuggest(inputId) {
         }
     };
 
+    const getItems = () => Array.from(container.querySelectorAll('.list-group-item'));
+
+    const activateSuggestion = (index) => {
+        const items = getItems();
+        items.forEach(item => item.classList.remove('active'));
+        if (index >= 0 && index < items.length) {
+            items[index].classList.add('active');
+            items[index].scrollIntoView({ block: 'nearest' });
+            input.value = items[index].dataset.primaryText || '';
+        } else {
+            input.value = originalInputValue;
+        }
+        activeIndex = index;
+    };
+
     // --- Event Listeners ---
 
     // 1. Input: Debounce the search
@@ -5864,9 +5885,26 @@ function initAutosuggest(inputId) {
         }, 300);
     });
 
-    // 2. Keydown: Check for Enter or Escape
+    // 2. Keydown: Arrow navigation, Enter, Escape
     input.addEventListener('keydown', (e) => {
+        const isOpen = container.style.display !== 'none';
+        if (isOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+            e.preventDefault();
+            const items = getItems();
+            if (!items.length) return;
+            if (e.key === 'ArrowDown') {
+                activateSuggestion(activeIndex < items.length - 1 ? activeIndex + 1 : 0);
+            } else {
+                // ArrowUp: -1 wraps to last; 0 goes back to -1 (restores typed text)
+                activateSuggestion(activeIndex === 0 ? -1 : (activeIndex < 0 ? items.length - 1 : activeIndex - 1));
+            }
+            return;
+        }
         if (e.key === 'Enter') {
+            if (activeIndex >= 0) {
+                getItems()[activeIndex]?.click();
+                return;
+            }
             // STOP everything:
             clearTimeout(debounceTimer);      // 1. Stop the timer if it hasn't fired yet
             if (abortController) {
@@ -5876,6 +5914,32 @@ function initAutosuggest(inputId) {
         }
         else if (e.key === 'Escape') {
             container.style.display = 'none';
+            activeIndex = -1;
+        }
+    });
+
+    // 2b. Container keydown: arrow navigation when list items are focused
+    container.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            const items = getItems();
+            if (!items.length) return;
+            if (e.key === 'ArrowDown') {
+                activateSuggestion(activeIndex < items.length - 1 ? activeIndex + 1 : 0);
+            } else {
+                if (activeIndex === 0) {
+                    activateSuggestion(-1);
+                    input.focus();
+                } else {
+                    activateSuggestion(activeIndex < 0 ? items.length - 1 : activeIndex - 1);
+                }
+            }
+        } else if (e.key === 'Enter') {
+            if (activeIndex >= 0) getItems()[activeIndex]?.click();
+        } else if (e.key === 'Escape') {
+            container.style.display = 'none';
+            activeIndex = -1;
+            input.focus();
         }
     });
 
