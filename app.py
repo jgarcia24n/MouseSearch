@@ -4715,6 +4715,7 @@ async def update_settings():
         "AUTO_ORGANIZE_ON_SCHEDULE",
         "AUTO_ORGANIZE_USE_COPY",
         "HAPTICS_ENABLED",
+        "HARDCOVER_ENRICHMENT_ENABLED",
         "ENABLE_DYNAMIC_IP_UPDATE",
         "USE_MOUSEHOLE_MAM_COOKIE",
         "AUTO_BUY_VIP",

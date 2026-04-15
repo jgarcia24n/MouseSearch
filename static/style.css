@@ -405,6 +405,22 @@ input:disabled, select:disabled {
 #settingTabs {
     --bs-nav-underline-link-active-color: var(--bs-primary);
     --bs-nav-link-color: var(--bs-secondary-color);
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    flex-wrap: nowrap;
+    justify-content: flex-start !important;
+    padding-bottom: 0.125rem;
+}
+
+#settingTabs .nav-item {
+    flex: 0 0 auto;
+}
+
+#settingTabs .nav-link {
+    white-space: nowrap;
 }
 
 #settingsOffcanvas .settings-divider {

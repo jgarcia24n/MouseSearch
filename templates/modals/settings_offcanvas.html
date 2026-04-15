@@ -11,7 +11,7 @@
     <form id="settings-form" autocomplete="off" class="d-flex flex-column h-100">
 
       <div class="px-3 pt-3 border-bottom">
-        <ul class="nav nav-underline justify-content-center" id="settingTabs" role="tablist">
+        <ul class="nav nav-underline" id="settingTabs" role="tablist">
           <li class="nav-item" role="presentation">
             <button class="nav-link active" id="general-tab" data-bs-toggle="tab" data-bs-target="#general-pane"
               type="button" role="tab" aria-controls="general-pane" aria-selected="true">
@@ -28,6 +28,13 @@
             <button class="nav-link" id="helpers-tab" data-bs-toggle="tab" data-bs-target="#helpers-pane" type="button"
               role="tab" aria-controls="helpers-pane" aria-selected="false">
               MAM Helpers
+            </button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" id="hardcover-tab" data-bs-toggle="tab" data-bs-target="#hardcover-pane"
+              type="button" role="tab" aria-controls="hardcover-pane" aria-selected="false">
+              <img src="/static/icons/hardcover.png" alt="" class="settings-menu-icon me-1" loading="lazy">
+              Hardcover
             </button>
           </li>
         </ul>
@@ -482,6 +489,40 @@
                       {% endfor %}
                     </div>
                   </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+        <div class="tab-pane fade" id="hardcover-pane" role="tabpanel" aria-labelledby="hardcover-tab" tabindex="0">
+          <h6 class="text-uppercase section-title mb-3">Metadata Enrichment</h6>
+
+          <div class="card mb-3 border-secondary-subtle toggle-card">
+            <div
+              class="card-header border-bottom-0 bg-transparent d-flex justify-content-between align-items-center py-2 cursor-pointer noselect"
+              onclick="toggleCardSwitch('HARDCOVER_ENRICHMENT_ENABLED')">
+              <span class="small fw-bold d-flex align-items-center">
+                <img src="/static/icons/hardcover.png" alt="" class="mousehole-settings-logo me-2" loading="lazy">
+                Enable Hardcover Metadata Enrichment
+              </span>
+              <div class="form-check form-switch m-0">
+                <input class="form-check-input" type="checkbox" id="HARDCOVER_ENRICHMENT_ENABLED"
+                  name="HARDCOVER_ENRICHMENT_ENABLED" {% if HARDCOVER_ENRICHMENT_ENABLED %}checked{% endif %}
+                  data-collapse-target="#collapse-hardcover-enrichment">
+              </div>
+            </div>
+            <div id="collapse-hardcover-enrichment"
+              class="collapse {% if HARDCOVER_ENRICHMENT_ENABLED %}show{% endif %}">
+              <div class="card-body border-top pt-2 pb-2">
+                <div class="form-text small mb-2">
+                  Use Hardcover to enrich search results and book details with additional metadata.
+                </div>
+                <div class="form-floating">
+                  <input type="password" class="form-control" id="HARDCOVER_API_TOKEN" name="HARDCOVER_API_TOKEN"
+                    value="{{ HARDCOVER_API_TOKEN }}" placeholder="Hardcover API key" autocomplete="off">
+                  <label for="HARDCOVER_API_TOKEN" class="small">Hardcover API key</label>
                 </div>
               </div>
             </div>

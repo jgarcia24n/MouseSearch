@@ -34,7 +34,7 @@ window.__autosuggestCache = autosuggestCache;
 const hardcoverSeriesCache = window.__hardcoverSeriesCache instanceof Map ? window.__hardcoverSeriesCache : new Map();
 window.__hardcoverSeriesCache = hardcoverSeriesCache;
 const MOUSESEARCH_LOGO_URL = '/static/icons/mouse.svg';
-const HARDCOVER_LOGO_URL = 'https://hardcover.app/logo.svg';
+const HARDCOVER_LOGO_URL = '/static/icons/hardcover.png';
 const UPLOAD_AMOUNT_STEP = 50;
 const UPLOAD_AMOUNT_MIN = 50;
 const UPLOAD_AMOUNT_MAX = 200;
@@ -954,16 +954,12 @@ function renderHardcoverSeriesStrip(series, currentBookId, currentPosition) {
         const proxyCoverUrl = coverUrl ? `/proxy_thumbnail?url=${encodeURIComponent(coverUrl)}` : '/static/icons/no_cover.png';
         const positionLabel = formatHardcoverSeriesPosition(entry?.position);
         const releaseYear = String(book.release_year || '').trim();
-        const tooltipText = [title, releaseYear ? `(${releaseYear})` : '']
-            .filter(Boolean)
-            .join(' ');
         const isCurrent = currentBookKey && bookId === currentBookKey;
 
         return `
             <div class="hardcover-series-card${isCurrent ? ' hardcover-series-card--current' : ''}">
                 <a class="hardcover-series-card__main-link hardcover-series-search-link text-decoration-none"
                     href="${escapeHtml(mouseSearchUrl)}"
-                    data-bs-toggle="tooltip" title="${escapeHtml(tooltipText)}"
                     data-search-title="${escapeHtml(title)}"
                     ${isCurrent ? 'aria-current="true"' : ''}>
                     <div class="hardcover-series-card__frame">
@@ -991,9 +987,6 @@ function renderHardcoverSeriesStrip(series, currentBookId, currentPosition) {
     }).join('');
 
     section.classList.remove('d-none');
-    strip.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((el) => {
-        new bootstrap.Tooltip(el);
-    });
     scrollHardcoverSeriesStripToCurrent(strip);
 }
 
@@ -2272,6 +2265,7 @@ document.addEventListener("DOMContentLoaded", async function () {
         const config = [
             { trigger: 'USE_MOUSEHOLE_MAM_COOKIE', target: 'MOUSEHOLE_API_URL' },
             { trigger: 'ENABLE_DYNAMIC_IP_UPDATE', target: 'DYNAMIC_IP_UPDATE_INTERVAL_HOURS' },
+            { trigger: 'HARDCOVER_ENRICHMENT_ENABLED', target: 'HARDCOVER_API_TOKEN' },
             { trigger: 'AUTO_BUY_VIP', target: 'AUTO_BUY_VIP_INTERVAL_HOURS' },
             { trigger: 'AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_ENABLED', target: 'AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_MB' },
             { trigger: 'AUTO_BUY_UPLOAD_ON_RATIO', target: ['AUTO_BUY_UPLOAD_RATIO_THRESHOLD', 'AUTO_BUY_UPLOAD_RATIO_AMOUNT'] },
