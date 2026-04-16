@@ -33,8 +33,88 @@ const autosuggestCache = window.__autosuggestCache instanceof Map ? window.__aut
 window.__autosuggestCache = autosuggestCache;
 const hardcoverSeriesCache = window.__hardcoverSeriesCache instanceof Map ? window.__hardcoverSeriesCache : new Map();
 window.__hardcoverSeriesCache = hardcoverSeriesCache;
+const hardcoverPendingStatusBookIds = window.__hardcoverPendingStatusBookIds instanceof Set ? window.__hardcoverPendingStatusBookIds : new Set();
+window.__hardcoverPendingStatusBookIds = hardcoverPendingStatusBookIds;
+const pendingHardcoverEnrichmentPayloads = window.__pendingHardcoverEnrichmentPayloads instanceof Map ? window.__pendingHardcoverEnrichmentPayloads : new Map();
+window.__pendingHardcoverEnrichmentPayloads = pendingHardcoverEnrichmentPayloads;
+let hardcoverStatusPickerOpenedAt = 0;
 const MOUSESEARCH_LOGO_URL = '/static/icons/mouse.svg';
 const HARDCOVER_LOGO_URL = '/static/icons/hardcover.png';
+const HARDCOVER_STATUS_DEFINITIONS = Object.freeze([
+    {
+        statusId: 1,
+        key: 'want-to-read',
+        label: 'Want to Read',
+        viewBox: '0 0 384 512',
+        iconPaths: `
+            <path d="M0 487.7V48C0 21.5 21.5 0 48 0h48v322.1c0 12.8 14.2 20.4 24.9 13.3L192 288l71.1 47.4c10.6 7.1 24.9-.5 24.9-13.3V0h48c26.5 0 48 21.5 48 48v439.7a24.33 24.33 0 0 1-38.3 19.9L192 400 38.3 507.6A24.33 24.33 0 0 1 0 487.7" fill="currentColor"></path>
+            <path d="m192 288-71.1 47.4c-10.6 7.1-24.9-.5-24.9-13.3V0h192v322.1c0 12.8-14.2 20.4-24.9 13.3z" fill="currentColor" opacity="0.4"></path>`,
+    },
+    {
+        statusId: 2,
+        key: 'currently-reading',
+        label: 'Reading',
+        viewBox: '0 0 576 512',
+        iconPaths: `
+            <path d="M288 72v408s-92.8-32-144-32c-38.5 0-88.4 12.1-119.9 22.6C12.8 474.3 0 466 0 454.1V83.8c0-12.1 6.8-23.3 18.1-27.7C46.3 45.3 93.5 32 144 32c64 0 128 24 144 40" fill="currentColor"></path>
+            <path d="M288 72v408s92.8-32 144-32c38.5 0 88.4 12.1 119.9 22.6 11.3 3.8 24.1-4.6 24.1-16.5V83.8c0-12.1-6.8-23.3-18.1-27.6C529.7 45.3 482.5 32 432 32c-64 0-128 24-144 40" fill="currentColor" opacity="0.4"></path>`,
+    },
+    {
+        statusId: 3,
+        key: 'read',
+        label: 'Read',
+        viewBox: '0 0 512 512',
+        iconPaths: `
+            <path d="M369 175a23.9 23.9 0 0 1 0 33.9L241 337a23.9 23.9 0 0 1-33.9 0l-64-64c-9.4-9.4-9.4-24.6 0-33.9s24.6-9.4 33.9 0l47 47L335 175a23.9 23.9 0 0 1 33.9 0z" fill="currentColor"></path>
+            <path d="M256 0a96 96 0 0 1 84.9 51.1C373.8 41 411 49 437 75s34 63.3 23.9 96.1A96 96 0 0 1 512 256a96 96 0 0 1-51.1 84.9C471 373.8 463 411 437 437s-63.3 34-96.1 23.9A96 96 0 0 1 256 512a96 96 0 0 1-84.9-51.1C138.2 471 101 463 75 437s-34-63.3-23.9-96.1A96 96 0 0 1 0 256a96 96 0 0 1 51.1-84.9C41 138.2 49 101 75 75s63.3-34 96.1-23.9A96 96 0 0 1 256 0m113 209c9.4-9.4 9.4-24.6 0-33.9s-24.6-9.4-33.9 0l-111 111-47-47c-9.4-9.4-24.6-9.4-33.9 0s-9.4 24.6 0 33.9l64 64a23.9 23.9 0 0 0 33.9 0z" fill="currentColor" opacity="0.4"></path>`,
+    },
+    {
+        statusId: 4,
+        key: 'paused',
+        label: 'Paused',
+        viewBox: '0 0 512 512',
+        iconPaths: `
+            <path d="M256 512A256 256 0 1 0 256 0a256 256 0 1 0 0 512z" fill="currentColor" opacity="0.18"></path>
+            <path d="M184 160c0-8.8 7.2-16 16-16h24c8.8 0 16 7.2 16 16v192c0 8.8-7.2 16-16 16h-24c-8.8 0-16-7.2-16-16V160zm104-16h24c8.8 0 16 7.2 16 16v192c0 8.8-7.2 16-16 16h-24c-8.8 0-16-7.2-16-16V160c0-8.8 7.2-16 16-16z" fill="currentColor"></path>`,
+    },
+    {
+        statusId: 5,
+        key: 'did-not-finish',
+        label: 'Did Not Finish',
+        viewBox: '0 0 512 512',
+        iconPaths: `
+            <path d="M256 512a256 256 0 1 0 0-512 256 256 0 1 0 0 512m-64-352h128c17.7 0 32 14.3 32 32v128c0 17.7-14.3 32-32 32H192c-17.7 0-32-14.3-32-32V192c0-17.7 14.3-32 32-32" fill="currentColor" opacity="0.4"></path>`,
+    },
+    {
+        statusId: 6,
+        key: 'ignored',
+        label: 'Ignored',
+        viewBox: '0 0 512 512',
+        iconPaths: `
+            <path d="M256 8C119 8 8 119 8 256s111 248 248 248 248-111 248-248S393 8 256 8z" fill="currentColor" opacity="0.18"></path>
+            <path d="M363.3 148.7c9.4 9.4 9.4 24.6 0 33.9L182.6 363.3c-9.4 9.4-24.6 9.4-33.9 0s-9.4-24.6 0-33.9l180.7-180.7c9.4-9.4 24.6-9.4 33.9 0z" fill="currentColor"></path>`,
+    },
+]);
+const HARDCOVER_STATUS_BY_ID = new Map(HARDCOVER_STATUS_DEFINITIONS.map(status => [status.statusId, status]));
+const HARDCOVER_STATUS_OPTIONS = Object.freeze(HARDCOVER_STATUS_DEFINITIONS.filter(status =>
+    [1, 2, 3, 5].includes(status.statusId)
+));
+const HARDCOVER_REMOVE_ACTION = Object.freeze({
+    key: 'remove',
+    label: 'Remove',
+    viewBox: '0 0 448 512',
+    iconPaths: `
+        <path d="M163.8 0c-12.1 0-23.2 6.8-28.6 17.7L128 32H32C14.3 32 0 46.3 0 64s14.3 32 32 32h384c17.7 0 32-14.3 32-32s-14.3-32-32-32h-96l-7.2-14.3A31.9 31.9 0 0 0 284.2 0z" fill="currentColor"></path>
+        <path d="M416 96H32v352c0 35.3 28.7 64 64 64h256c35.3 0 64-28.7 64-64zm-272 80v224c0 8.8-7.2 16-16 16s-16-7.2-16-16V176c0-8.8 7.2-16 16-16s16 7.2 16 16m96 0v224c0 8.8-7.2 16-16 16s-16-7.2-16-16V176c0-8.8 7.2-16 16-16s16 7.2 16 16m96 0v224c0 8.8-7.2 16-16 16s-16-7.2-16-16V176c0-8.8 7.2-16 16-16s16 7.2 16 16" fill="currentColor" opacity="0.4"></path>`,
+});
+const HARDCOVER_STATUS_PLACEHOLDER = Object.freeze({
+    key: 'unset',
+    label: '',
+    viewBox: '0 0 448 512',
+    iconPaths: `
+        <path d="M96 0C60.7 0 32 28.7 32 64v384c0 35.3 28.7 64 64 64h256c35.3 0 64-28.7 64-64V160H288c-17.7 0-32-14.3-32-32V0zm144 0v128h128z" fill="currentColor" opacity="0.25"></path>
+        <path d="M256 232c13.3 0 24 10.7 24 24v40h40c13.3 0 24 10.7 24 24s-10.7 24-24 24h-40v40c0 13.3-10.7 24-24 24s-24-10.7-24-24v-40h-40c-13.3 0-24-10.7-24-24s10.7-24 24-24h40v-40c0-13.3 10.7-24 24-24z" fill="currentColor"></path>`,
+});
 const UPLOAD_AMOUNT_STEP = 50;
 const UPLOAD_AMOUNT_MIN = 50;
 const UPLOAD_AMOUNT_MAX = 200;
@@ -381,6 +461,182 @@ function hardcoverUrl(metadata) {
     return `https://hardcover.app/${path}/${encodeURIComponent(slug)}`;
 }
 
+function normalizeHardcoverUserBook(userBook) {
+    if (!userBook || typeof userBook !== 'object') return null;
+    const id = Number(userBook.id);
+    const statusId = Number(userBook.status_id ?? userBook.statusId);
+    if (!Number.isFinite(id) || id <= 0 || !Number.isFinite(statusId) || statusId <= 0) return null;
+
+    const editionId = Number(userBook.edition_id ?? userBook.editionId);
+    const privacySettingId = Number(userBook.privacy_setting_id ?? userBook.privacySettingId);
+    const userId = Number(userBook.user_id ?? userBook.userId);
+    const rating = userBook.rating == null || userBook.rating === '' ? null : Number(userBook.rating);
+    const bookId = Number(userBook.book_id ?? userBook.bookId);
+
+    return {
+        id,
+        book_id: Number.isFinite(bookId) && bookId > 0 ? bookId : null,
+        edition_id: Number.isFinite(editionId) && editionId > 0 ? editionId : null,
+        user_id: Number.isFinite(userId) && userId > 0 ? userId : null,
+        status_id: statusId,
+        status: String(userBook.status || userBook.label || '').trim(),
+        privacy_setting_id: Number.isFinite(privacySettingId) && privacySettingId > 0 ? privacySettingId : 1,
+        rating: Number.isFinite(rating) ? rating : null,
+        updated_at: String(userBook.updated_at ?? userBook.updatedAt ?? '').trim(),
+    };
+}
+
+function hardcoverStatusDefinition(statusId) {
+    return HARDCOVER_STATUS_BY_ID.get(Number(statusId)) || null;
+}
+
+function renderHardcoverStatusIcon(statusDef, extraClass = '') {
+    if (!statusDef) return '';
+    return `
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="${statusDef.viewBox}"
+            class="hardcover-status-icon${extraClass ? ` ${extraClass}` : ''}" aria-hidden="true">
+            ${statusDef.iconPaths}
+        </svg>`;
+}
+
+function renderHardcoverStatusPicker(metadata, { torrentId = '', variant = 'compact' } = {}) {
+    const userBook = normalizeHardcoverUserBook(metadata?.user_book);
+    const objectType = String(metadata?.object_type || '').trim().toLowerCase();
+    const bookId = Number(metadata?.book_id);
+    const currentStatusId = Number(userBook?.status_id || 0);
+    const statusDef = hardcoverStatusDefinition(currentStatusId) || HARDCOVER_STATUS_PLACEHOLDER;
+    const isPending = hardcoverPendingStatusBookIds.has(bookId);
+    if (objectType !== 'book' || !Number.isFinite(bookId) || bookId <= 0) return '';
+
+    const safeTorrentId = String(torrentId || '').trim();
+    const safeTitle = String(metadata?.title || 'this book').trim() || 'this book';
+    const statusLabel = String(statusDef.label || '').trim();
+    const optionsHtml = HARDCOVER_STATUS_OPTIONS.map((option) => `
+        <button type="button"
+            class="hardcover-status-option${option.statusId === currentStatusId ? ' is-active' : ''}"
+            data-hardcover-status-option="${option.statusId}" role="menuitemradio"
+            aria-checked="${option.statusId === currentStatusId ? 'true' : 'false'}">
+            <span class="hardcover-status-option__iconbox hardcover-status--${option.key}">
+                ${renderHardcoverStatusIcon(option)}
+            </span>
+            <span class="hardcover-status-option__label">${escapeHtml(option.label)}</span>
+            ${option.statusId === currentStatusId ? '<span class="hardcover-status-option__dot" aria-hidden="true"></span>' : ''}
+        </button>`).join('');
+    const removeHtml = userBook && currentStatusId > 0 ? `
+        <div class="hardcover-status-menu__footer">
+            <button type="button"
+                class="hardcover-status-option hardcover-status-option--remove"
+                data-hardcover-status-remove="true"
+                role="menuitem">
+                <span class="hardcover-status-option__iconbox hardcover-status--remove">
+                    ${renderHardcoverStatusIcon(HARDCOVER_REMOVE_ACTION)}
+                </span>
+                <span class="hardcover-status-option__label">${escapeHtml(HARDCOVER_REMOVE_ACTION.label)}</span>
+            </button>
+        </div>` : '';
+
+    return `
+        <div class="hardcover-status-picker hardcover-status-picker--${escapeHtml(variant)}"
+            data-hardcover-status-picker
+            data-book-id="${bookId}"
+            data-torrent-id="${escapeHtml(safeTorrentId)}"
+            data-current-status-id="${currentStatusId}"
+            data-busy="${isPending ? 'true' : 'false'}">
+            <button type="button"
+                class="hardcover-status-trigger hardcover-status--${escapeHtml(statusDef.key)}${isPending ? ' is-pending' : ''}"
+                data-hardcover-status-toggle
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-label="Change Hardcover status for ${escapeHtml(safeTitle)}"
+                aria-busy="${isPending ? 'true' : 'false'}"
+                ${isPending ? 'disabled' : ''}>
+                ${renderHardcoverStatusIcon(statusDef)}
+                ${statusLabel ? `<span class="hardcover-status-trigger__label">${escapeHtml(statusLabel)}</span>` : ''}
+                <i class="bi bi-chevron-down hardcover-status-trigger__caret" aria-hidden="true"></i>
+            </button>
+            <div class="hardcover-status-menu" role="menu">
+                ${optionsHtml}
+                ${removeHtml}
+            </div>
+        </div>`;
+}
+
+function getResultItemHardcoverData(resultItem) {
+    if (!resultItem) return null;
+    try {
+        return JSON.parse(resultItem.dataset.json || '{}');
+    } catch (_) {
+        return null;
+    }
+}
+
+function updateHardcoverUserBookStateForResultItem(resultItem, userBook) {
+    const data = getResultItemHardcoverData(resultItem);
+    const normalizedUserBook = normalizeHardcoverUserBook(userBook);
+    const enrichment = data?.hardcover_enrichment;
+    if (!data || !enrichment?.hardcover) return false;
+
+    const hardcover = enrichment.hardcover;
+    if (String(hardcover.object_type || '').trim().toLowerCase() !== 'book') return false;
+    hardcover.user_book = normalizedUserBook;
+    resultItem.dataset.json = JSON.stringify(data);
+
+    const container = resultItem.querySelector('[data-hardcover-container]');
+    if (container) {
+        container.innerHTML = renderHardcoverMetadata(enrichment, {
+            torrentId: String(resultItem.dataset.torrentId || ''),
+        });
+    }
+    return true;
+}
+
+function syncHardcoverUserBookStatus(bookId, userBook) {
+    const normalizedBookId = Number(bookId);
+    const normalizedUserBook = normalizeHardcoverUserBook(userBook);
+    if (!Number.isFinite(normalizedBookId) || normalizedBookId <= 0) return;
+
+    document.querySelectorAll('.result-item[data-json]').forEach(resultItem => {
+        const data = getResultItemHardcoverData(resultItem);
+        const matchedBookId = Number(data?.hardcover_enrichment?.hardcover?.book_id);
+        if (matchedBookId === normalizedBookId) {
+            updateHardcoverUserBookStateForResultItem(resultItem, normalizedUserBook);
+        }
+    });
+
+    const bookModalEl = document.getElementById('bookDetailsModal');
+    const currentTorrentId = String(bookModalEl?.dataset.currentTorrentId || '').trim();
+    if (!bookModalEl || !bookModalEl.classList.contains('show') || !currentTorrentId) return;
+
+    const escapedTorrentId = window.CSS && CSS.escape
+        ? CSS.escape(currentTorrentId)
+        : currentTorrentId.replace(/["\\]/g, '\\$&');
+    const activeRow = document.querySelector(`.result-item[data-torrent-id="${escapedTorrentId}"]`);
+    const activeData = getResultItemHardcoverData(activeRow);
+    const activeBookId = Number(activeData?.hardcover_enrichment?.hardcover?.book_id);
+    if (activeBookId === normalizedBookId) {
+        renderBookDetailsHardcover(activeData.hardcover_enrichment);
+    }
+}
+
+function setHardcoverStatusPending(bookId, isPending) {
+    const normalizedBookId = Number(bookId);
+    if (!Number.isFinite(normalizedBookId) || normalizedBookId <= 0) return;
+    if (isPending) {
+        hardcoverPendingStatusBookIds.add(normalizedBookId);
+    } else {
+        hardcoverPendingStatusBookIds.delete(normalizedBookId);
+    }
+
+    document.querySelectorAll(`[data-hardcover-status-picker][data-book-id="${normalizedBookId}"]`).forEach((picker) => {
+        picker.dataset.busy = isPending ? 'true' : 'false';
+        const toggle = picker.querySelector('[data-hardcover-status-toggle]');
+        if (!toggle) return;
+        toggle.disabled = !!isPending;
+        toggle.setAttribute('aria-busy', isPending ? 'true' : 'false');
+        toggle.classList.toggle('is-pending', !!isPending);
+    });
+}
+
 function renderStarRating(rating, ratingsCount, { hideCountOnMobile = false, countOverride = null, countLinkUrl = '', wrapWithLink = false } = {}) {
     if (!Number.isFinite(rating) || rating <= 0) return '';
     const clamped = Math.max(0, Math.min(5, rating));
@@ -457,7 +713,7 @@ function renderHardcoverSeriesHtml(metadata) {
     return firstSeries ? escapeHtml(firstSeries) : '';
 }
 
-function renderHardcoverMetadata(enrichment) {
+function renderHardcoverMetadata(enrichment, { torrentId = '' } = {}) {
     const metadata = enrichment?.hardcover;
 
     if (!metadata) {
@@ -487,16 +743,20 @@ function renderHardcoverMetadata(enrichment) {
     const tagName = url ? 'a' : 'div';
     const linkAttrs = (url ? `href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" ` : '') +
         `data-bs-toggle="tooltip" data-bs-html="true" title="${escapeHtml(tooltipText)}"`;
+    const statusHtml = renderHardcoverStatusPicker(metadata, { torrentId, variant: 'compact' });
 
     return `
-        <${tagName} class="hardcover-match d-flex flex-column gap-1 text-decoration-none ${url ? '' : 'pe-none'}" ${linkAttrs}>
-            <div class="d-flex align-items-center gap-1 text-body-secondary" style="font-size: 0.7rem;">
-                <img src="${HARDCOVER_LOGO_URL}" alt="" style="width: 0.8rem; height: 0.8rem; object-fit: contain;" loading="lazy">
-                <span class="text-uppercase fw-semibold" style="letter-spacing: 0.05em;">Hardcover</span>
-            </div>
-            ${hasRating ? `<div>${renderStarRating(rating, metadata.ratings_count, { hideCountOnMobile: true })}</div>` : ''}
-            ${publishedText ? `<div class="text-body-secondary hardcover-mobile-hide" style="font-size: 0.8rem;">Published ${escapeHtml(publishedText)}</div>` : ''}
-        </${tagName}>`;
+        <div class="hardcover-match hardcover-match--linked d-flex flex-column gap-2">
+            <${tagName} class="hardcover-match__content text-decoration-none ${url ? '' : 'pe-none'}" ${linkAttrs}>
+                <div class="d-flex align-items-center gap-1 text-body-secondary" style="font-size: 0.7rem;">
+                    <img src="${HARDCOVER_LOGO_URL}" alt="" style="width: 0.8rem; height: 0.8rem; object-fit: contain;" loading="lazy">
+                    <span class="text-uppercase fw-semibold" style="letter-spacing: 0.05em;">Hardcover</span>
+                </div>
+                ${hasRating ? `<div>${renderStarRating(rating, metadata.ratings_count, { hideCountOnMobile: true })}</div>` : ''}
+                ${publishedText ? `<div class="text-body-secondary hardcover-mobile-hide" style="font-size: 0.8rem;">Published ${escapeHtml(publishedText)}</div>` : ''}
+            </${tagName}>
+            ${statusHtml}
+        </div>`;
 }
 
 function formatHardcoverDate(value) {
@@ -1046,6 +1306,11 @@ function renderBookDetailsHardcover(enrichment) {
     if (!metadata) {
         if (card) card.style.display = 'none';
         if (heroInfo) heroInfo.classList.add('d-none');
+        const heroActions = document.getElementById('detail-hero-hc-actions');
+        if (heroActions) {
+            heroActions.innerHTML = '';
+            heroActions.classList.add('d-none');
+        }
         clearHardcoverSeriesStrip();
         scheduleBookDetailsColumnBalance();
         return;
@@ -1142,8 +1407,17 @@ function renderBookDetailsHardcover(enrichment) {
         const linkContainer = document.getElementById('detail-hc-link-container');
         if (linkContainer) {
             const url = hardcoverUrl(metadata);
-            linkContainer.innerHTML = url
-                ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-secondary w-100">View on Hardcover <i class="bi bi-box-arrow-up-right ms-1"></i></a>`
+            const statusHtml = renderHardcoverStatusPicker(metadata, {
+                torrentId: String(bookModalEl?.dataset.currentTorrentId || ''),
+                variant: 'full',
+            });
+            const actions = [];
+            if (statusHtml) actions.push(statusHtml);
+            if (url) {
+                actions.push(`<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-secondary">View on Hardcover <i class="bi bi-box-arrow-up-right ms-1"></i></a>`);
+            }
+            linkContainer.innerHTML = actions.length
+                ? `<div class="hardcover-card-actions">${actions.join('')}</div>`
                 : '';
         }
 
@@ -1154,9 +1428,11 @@ function renderBookDetailsHardcover(enrichment) {
 
     // --- Hero area ---
     if (heroInfo) {
-        const heroLink = document.getElementById('detail-hero-hc-link');
+        const heroCard = document.getElementById('detail-hero-hc-link');
+        const heroLink = document.getElementById('detail-hero-hc-link-main');
         const heroRating = document.getElementById('detail-hero-hc-rating');
         const heroYear = document.getElementById('detail-hero-hc-year');
+        const heroActions = document.getElementById('detail-hero-hc-actions');
 
         const url = hardcoverUrl(metadata);
         if (heroLink) {
@@ -1180,6 +1456,16 @@ function renderBookDetailsHardcover(enrichment) {
             new bootstrap.Tooltip(heroLink);
         }
 
+        let heroStatusHtml = '';
+        if (heroActions) {
+            heroStatusHtml = renderHardcoverStatusPicker(metadata, {
+                torrentId: String(bookModalEl?.dataset.currentTorrentId || ''),
+                variant: 'compact',
+            });
+            heroActions.innerHTML = heroStatusHtml || '';
+            heroActions.classList.toggle('d-none', !heroStatusHtml);
+        }
+
         if (heroRating) {
             heroRating.innerHTML = hasRating ? renderStarRating(rating, metadata.ratings_count) : '';
             heroRating.classList.toggle('d-none', !hasRating);
@@ -1190,11 +1476,25 @@ function renderBookDetailsHardcover(enrichment) {
             heroYear.classList.toggle('d-none', !heroPublishedText);
         }
 
-        heroInfo.classList.toggle('d-none', !(hasRating || formatHardcoverPublishedText(metadata, { preferYearOnly: true })));
+        if (heroCard) {
+            heroCard.classList.toggle('d-none', !(hasRating || formatHardcoverPublishedText(metadata, { preferYearOnly: true }) || heroStatusHtml));
+        }
+        heroInfo.classList.toggle('d-none', !(hasRating || formatHardcoverPublishedText(metadata, { preferYearOnly: true }) || heroStatusHtml));
     }
 }
 
-function updateHardcoverEnrichment(payload) {
+function hasOpenHardcoverStatusPicker() {
+    return !!document.querySelector('[data-hardcover-status-picker].is-open');
+}
+
+function flushPendingHardcoverEnrichmentUpdates() {
+    if (hasOpenHardcoverStatusPicker() || pendingHardcoverEnrichmentPayloads.size === 0) return;
+    const queuedPayloads = [...pendingHardcoverEnrichmentPayloads.values()];
+    pendingHardcoverEnrichmentPayloads.clear();
+    queuedPayloads.forEach(applyHardcoverEnrichmentUpdate);
+}
+
+function applyHardcoverEnrichmentUpdate(payload) {
     const torrentId = String(payload?.torrent_id || '');
     const searchId = String(payload?.search_id || '');
     const enrichment = payload?.enrichment;
@@ -1221,7 +1521,7 @@ function updateHardcoverEnrichment(payload) {
             if (instance) instance.dispose();
         }
         
-        container.innerHTML = renderHardcoverMetadata(enrichment);
+        container.innerHTML = renderHardcoverMetadata(enrichment, { torrentId });
         
         const newTooltipEl = container.querySelector('[data-bs-toggle="tooltip"]');
         if (newTooltipEl) {
@@ -1244,6 +1544,15 @@ function updateHardcoverEnrichment(payload) {
     if (bookModalEl && bookModalEl.classList.contains('show') && bookModalEl.dataset.currentTorrentId === torrentId) {
         renderBookDetailsHardcover(enrichment);
     }
+}
+
+function updateHardcoverEnrichment(payload) {
+    const torrentId = String(payload?.torrent_id || '');
+    if (hasOpenHardcoverStatusPicker()) {
+        if (torrentId) pendingHardcoverEnrichmentPayloads.set(torrentId, payload);
+        return;
+    }
+    applyHardcoverEnrichmentUpdate(payload);
 }
 
 function pendingHardcoverSearchIds(scope = document) {
@@ -2210,6 +2519,134 @@ document.addEventListener("DOMContentLoaded", async function () {
     document.addEventListener('click', (event) => {
         if (event.target.closest('#mediainfo-tree-container summary')) {
             triggerHaptic('accordion');
+        }
+    });
+
+    const closeHardcoverStatusPickers = (exceptPicker = null) => {
+        const exceptCard = exceptPicker?.closest('.result-card') || null;
+        document.querySelectorAll('[data-hardcover-status-picker].is-open').forEach((picker) => {
+            if (exceptPicker && picker === exceptPicker) return;
+            picker.classList.remove('is-open');
+            picker.dataset.busy = 'false';
+            picker.closest('.result-card')?.classList.remove('result-card--status-open');
+            const toggle = picker.querySelector('[data-hardcover-status-toggle]');
+            if (toggle) {
+                toggle.setAttribute('aria-expanded', 'false');
+                toggle.disabled = false;
+            }
+            picker.querySelectorAll('[data-hardcover-status-option]').forEach((option) => {
+                option.disabled = false;
+            });
+        });
+        document.querySelectorAll('.result-card.result-card--status-open').forEach((card) => {
+            if (exceptCard && card === exceptCard) return;
+            card.classList.remove('result-card--status-open');
+        });
+        if (!exceptPicker && !hasOpenHardcoverStatusPicker()) {
+            flushPendingHardcoverEnrichmentUpdates();
+        }
+    };
+
+    const setHardcoverStatusPickerBusy = (picker, isBusy) => {
+        if (!picker) return;
+        picker.dataset.busy = isBusy ? 'true' : 'false';
+        const toggle = picker.querySelector('[data-hardcover-status-toggle]');
+        if (toggle) {
+            toggle.disabled = !!isBusy;
+            toggle.setAttribute('aria-busy', isBusy ? 'true' : 'false');
+            toggle.classList.toggle('is-pending', !!isBusy);
+        }
+        picker.querySelectorAll('[data-hardcover-status-option]').forEach((option) => {
+            option.disabled = !!isBusy;
+        });
+    };
+
+    const submitHardcoverStatusChange = async (picker, statusId, { action = '' } = {}) => {
+        if (!picker || picker.dataset.busy === 'true') return;
+        const bookId = Number(picker.dataset.bookId || 0);
+        const currentStatusId = Number(picker.dataset.currentStatusId || 0);
+        const normalizedAction = String(action || '').trim().toLowerCase();
+        const isRemove = normalizedAction === 'remove';
+        if (!Number.isFinite(bookId) || bookId <= 0) return;
+        if (!isRemove && (!Number.isFinite(statusId) || statusId <= 0)) return;
+        if (!isRemove && statusId === currentStatusId) {
+            closeHardcoverStatusPickers();
+            return;
+        }
+
+        closeHardcoverStatusPickers();
+        setHardcoverStatusPending(bookId, true);
+        try {
+            const response = await fetch('/hardcover/user-book/status', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    book_id: bookId,
+                    ...(isRemove ? { action: 'remove' } : { status_id: statusId }),
+                }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || data.status !== 'success') {
+                throw new Error(data.message || `Hardcover status request failed (HTTP ${response.status})`);
+            }
+
+            syncHardcoverUserBookStatus(bookId, data.user_book);
+            showToast(data.message || (isRemove ? 'Hardcover status removed.' : 'Hardcover status updated.'), 'success');
+        } catch (error) {
+            showToast(error?.message || (isRemove ? 'Unable to remove Hardcover status.' : 'Unable to update Hardcover status.'), 'danger');
+        } finally {
+            setHardcoverStatusPending(bookId, false);
+        }
+    };
+
+    document.addEventListener('click', (event) => {
+        const removeButton = event.target.closest('[data-hardcover-status-remove]');
+        if (removeButton) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            triggerHaptic('tap');
+            const picker = removeButton.closest('[data-hardcover-status-picker]');
+            submitHardcoverStatusChange(picker, null, { action: 'remove' });
+            return;
+        }
+
+        const option = event.target.closest('[data-hardcover-status-option]');
+        if (option) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            triggerHaptic('tap');
+            const picker = option.closest('[data-hardcover-status-picker]');
+            submitHardcoverStatusChange(picker, Number(option.dataset.hardcoverStatusOption || 0));
+            return;
+        }
+
+        const toggle = event.target.closest('[data-hardcover-status-toggle]');
+        if (toggle) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            triggerHaptic('tap');
+            const picker = toggle.closest('[data-hardcover-status-picker]');
+            if (!picker) return;
+            const shouldOpen = !picker.classList.contains('is-open');
+            closeHardcoverStatusPickers(shouldOpen ? picker : null);
+            picker.classList.toggle('is-open', shouldOpen);
+            hardcoverStatusPickerOpenedAt = shouldOpen ? performance.now() : 0;
+            picker.closest('.result-card')?.classList.toggle('result-card--status-open', shouldOpen);
+            toggle.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+            return;
+        }
+
+        if (!event.target.closest('[data-hardcover-status-picker]')) {
+            if (hardcoverStatusPickerOpenedAt && (performance.now() - hardcoverStatusPickerOpenedAt) < 200) {
+                return;
+            }
+            closeHardcoverStatusPickers();
+        }
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            closeHardcoverStatusPickers();
         }
     });
 
@@ -5498,7 +5935,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
             // CASE B: Clicked a Dropdown or Link (e.g., Author link)
             // We want default browser behavior, NOT opening the details modal
-            if (event.target.closest('select') || event.target.closest('a')) {
+            if (event.target.closest('select') || event.target.closest('a') || event.target.closest('[data-hardcover-status-picker]')) {
                 return;
             }
 

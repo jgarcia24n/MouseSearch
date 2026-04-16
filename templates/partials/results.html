@@ -34,7 +34,7 @@
 {% endmacro %}
 
 {% for result in results %}
-<div class="card result-card rounded-3 my-3 overflow-hidden result-item" data-torrent-id="{{ result.id }}"
+<div class="card result-card rounded-3 my-3 result-item" data-torrent-id="{{ result.id }}"
     data-search-id="{{ search_id | default('', true) }}"
     data-hardcover-state="{% if hardcover_active %}pending{% else %}disabled{% endif %}"
     data-has-mam-cover="{% if result.has_mam_cover %}true{% else %}false{% endif %}"

@@ -221,6 +221,13 @@ input:disabled, select:disabled {
     box-shadow: none; 
     /* Ensure text pops even if gradient blends to white in light mode */
     text-shadow: 0 2px 4px rgba(0,0,0,0.8); 
+    z-index: 2;
+    overflow: visible;
+}
+
+.book-hero-visual {
+    overflow: hidden;
+    pointer-events: none;
 }
 
 .book-hero-bg {
@@ -517,9 +524,15 @@ input:disabled, select:disabled {
 
 .result-card {
     /* Use Bootstrap variables so it adapts to the theme automatically */
+    position: relative;
+    z-index: 0;
     background-color: var(--bs-tertiary-bg);
     border: 1px solid var(--bs-border-color-translucent); 
     transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.result-card.result-card--status-open {
+    z-index: 20;
 }
 
 .result-card:hover {
@@ -547,23 +560,31 @@ input:disabled, select:disabled {
     transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
 }
 
+.hardcover-match__content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+    color: inherit;
+}
+
 .hardcover-match .hardcover-rating {
     color: var(--bs-secondary-color) !important;
 }
 
-a.hardcover-match {
-    cursor: pointer;
+.hardcover-match--linked {
+    cursor: default;
 }
 
-a.hardcover-match:hover,
-a.hardcover-match:focus-visible {
+.hardcover-match--linked:hover,
+.hardcover-match--linked:focus-within {
     transform: translateY(-2px);
     border-color: var(--bs-primary-border-subtle);
     background-color: var(--bs-body-bg);
     box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.14);
 }
 
-a.hardcover-match:focus-visible {
+.hardcover-match__content:focus-visible {
     outline: 2px solid rgba(var(--bs-primary-rgb), 0.35);
     outline-offset: 2px;
 }
@@ -587,6 +608,210 @@ a.hardcover-match:focus-visible {
 
 .hardcover-rating {
     min-width: 0;
+}
+
+.hardcover-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: flex-start;
+}
+
+.hardcover-status-picker {
+    position: relative;
+    width: fit-content;
+    max-width: 100%;
+}
+
+.hardcover-status-picker--compact .hardcover-status-trigger {
+    width: 100%;
+    justify-content: center;
+}
+
+.hardcover-status-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    max-width: 100%;
+    border: 1px solid transparent;
+    border-radius: 0.8rem;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    box-shadow: 0 0.25rem 0 rgba(0, 0, 0, 0.06);
+    transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease, border-color 0.18s ease;
+}
+
+.hardcover-status-trigger:hover:not(:disabled),
+.hardcover-status-trigger:focus-visible {
+    transform: translateY(-1px);
+    box-shadow: 0 0.1rem 0 rgba(0, 0, 0, 0.04);
+}
+
+.hardcover-status-trigger:active:not(:disabled) {
+    transform: translateY(1px);
+    box-shadow: none;
+}
+
+.hardcover-status-trigger:disabled {
+    opacity: 0.75;
+    cursor: wait;
+}
+
+.hardcover-status-trigger__label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.hardcover-status-icon {
+    width: 1rem;
+    height: 1rem;
+    flex: 0 0 auto;
+    fill: currentColor;
+}
+
+.hardcover-status-trigger__caret {
+    font-size: 0.75rem;
+    transition: transform 0.18s ease;
+}
+
+.hardcover-status-picker.is-open .hardcover-status-trigger__caret {
+    transform: rotate(180deg);
+}
+
+.hardcover-status-menu {
+    position: absolute;
+    top: calc(100% + 0.35rem);
+    left: 0;
+    z-index: 1080;
+    display: none;
+    flex-direction: column;
+    min-width: min(18rem, calc(100vw - 2rem));
+    max-width: min(18rem, calc(100vw - 2rem));
+    padding: 0.35rem;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 1rem;
+    background: var(--bs-body-bg);
+    box-shadow: 0 1rem 2rem rgba(0, 0, 0, 0.18);
+}
+
+.hardcover-status-picker.is-open .hardcover-status-menu {
+    display: flex;
+}
+
+.hardcover-status-menu__footer {
+    margin-top: 0.15rem;
+    padding-top: 0.3rem;
+    border-top: 1px solid rgba(var(--bs-secondary-rgb), 0.16);
+}
+
+.hardcover-status-option {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.7rem 0.8rem;
+    border: 0;
+    border-radius: 0.75rem;
+    background: transparent;
+    color: var(--bs-body-color);
+    text-align: left;
+    transition: background-color 0.18s ease, color 0.18s ease;
+}
+
+.hardcover-status-option:hover:not(:disabled),
+.hardcover-status-option.is-active {
+    background: var(--bs-tertiary-bg);
+}
+
+.hardcover-status-option:disabled {
+    opacity: 0.7;
+    cursor: wait;
+}
+
+.hardcover-status-option--remove {
+    color: #4b5563;
+    font-weight: 700;
+}
+
+.hardcover-status-option--remove:hover:not(:disabled),
+.hardcover-status-option--remove:focus-visible {
+    background: #fef2f2;
+    color: #dc2626;
+}
+
+.hardcover-status-option__iconbox {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.9rem;
+    height: 1.9rem;
+    border-radius: 0.55rem;
+    flex: 0 0 auto;
+}
+
+.hardcover-status-option__label {
+    font-size: 0.88rem;
+    font-weight: 600;
+}
+
+.hardcover-status-option__dot {
+    margin-left: auto;
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 999px;
+    background: rgba(var(--bs-primary-rgb), 0.9);
+    flex: 0 0 auto;
+}
+
+.hardcover-status--want-to-read {
+    background: #facc15;
+    border-color: #facc15;
+    color: #713f12;
+}
+
+.hardcover-status--currently-reading {
+    background: #60a5fa;
+    border-color: #60a5fa;
+    color: #1e3a8a;
+}
+
+.hardcover-status--read {
+    background: #4ade80;
+    border-color: #4ade80;
+    color: #166534;
+}
+
+.hardcover-status--paused {
+    background: #c084fc;
+    border-color: #c084fc;
+    color: #6b21a8;
+}
+
+.hardcover-status--did-not-finish {
+    background: #d1d5db;
+    border-color: #d1d5db;
+    color: #4b5563;
+}
+
+.hardcover-status--ignored {
+    background: #94a3b8;
+    border-color: #94a3b8;
+    color: #334155;
+}
+
+.hardcover-status--remove {
+    background: transparent;
+    border-color: transparent;
+    color: currentColor;
+}
+
+.hardcover-status--unset {
+    background: rgba(var(--bs-secondary-rgb), 0.12);
+    border-color: rgba(var(--bs-secondary-rgb), 0.18);
+    color: var(--bs-secondary-color);
 }
 
 .hardcover-description {
@@ -830,6 +1055,8 @@ a.hardcover-match:focus-visible {
 
 /* Hardcover card in the book detail hero */
 .detail-hero-hc-card {
+    position: relative;
+    z-index: 2;
     padding: 0.55rem 0.75rem;
     border: 1px solid rgba(255, 255, 255, 0.22);
     border-radius: 8px;
@@ -839,13 +1066,17 @@ a.hardcover-match:focus-visible {
     color: rgba(255, 255, 255, 0.9);
     transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
 }
-.detail-hero-hc-card:hover {
+.detail-hero-hc-card:hover,
+.detail-hero-hc-card:focus-within {
     transform: translateY(-2px);
     border-color: rgba(255, 255, 255, 0.5);
     background: rgba(0, 0, 0, 0.45);
     box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.35);
     color: rgba(255, 255, 255, 0.9);
     text-decoration: none;
+}
+.detail-hero-hc-card__link {
+    color: inherit;
 }
 /* Override star rating text-body-secondary for the dark hero context */
 .detail-hero-hc-card .hardcover-rating {
@@ -854,6 +1085,16 @@ a.hardcover-match:focus-visible {
 /* Empty stars — ghost-white instead of theme secondary */
 .detail-hero-hc-card .hardcover-star .text-body-secondary {
     color: rgba(255, 255, 255, 0.3) !important;
+}
+
+.detail-hero-hc-actions {
+    width: 100%;
+    max-width: 100%;
+}
+
+#bookDetailsModal .modal-body > .container.py-5.pt-md-4.pb-md-5 {
+    position: relative;
+    z-index: 1;
 }
 
 @media (max-width: 575.98px) {

@@ -151,6 +151,40 @@ def _normalize_featured_series(featured: Any) -> dict[str, Any] | None:
     }
 
 
+def _normalize_user_book(user_books: Any) -> dict[str, Any] | None:
+    if not isinstance(user_books, list):
+        return None
+
+    for item in user_books:
+        if not isinstance(item, dict):
+            continue
+        try:
+            user_book_id = int(item.get("id"))
+            status_id = int(item.get("status_id"))
+        except (TypeError, ValueError):
+            continue
+        if user_book_id <= 0 or status_id <= 0:
+            continue
+
+        privacy_setting_id = _positive_int(item.get("privacy_setting_id"))
+        edition_id = _positive_int(item.get("edition_id"))
+        rating = _non_negative_float(item.get("rating"))
+        status_obj = item.get("user_book_status") or {}
+        status_label = str(status_obj.get("status") or "").strip() if isinstance(status_obj, dict) else ""
+        return {
+            "id": user_book_id,
+            "book_id": _positive_int(item.get("book_id")),
+            "edition_id": edition_id,
+            "user_id": _positive_int(item.get("user_id")),
+            "status_id": status_id,
+            "status": status_label,
+            "privacy_setting_id": privacy_setting_id if privacy_setting_id is not None else 1,
+            "rating": rating,
+            "updated_at": str(item.get("updated_at") or "").strip(),
+        }
+    return None
+
+
 def metadata_from_search_candidate(candidate: dict[str, Any], query_type: str) -> dict[str, Any]:
     is_book = query_type.lower() == "book"
     is_series = query_type.lower() == "series"
@@ -187,6 +221,7 @@ def metadata_from_search_candidate(candidate: dict[str, Any], query_type: str) -
         "series_id": candidate.get("id") if is_series else (featured_series or {}).get("id"),
         "series_names": _unique_list(candidate.get("series_names")) if is_book else ([title] if is_series and title else []),
         "featured_series": featured_series,
+        "user_book": _normalize_user_book(candidate.get("user_books")),
         "genres": _unique_list(candidate.get("genres")),
         "moods": _unique_list(candidate.get("moods")),
         "has_audiobook": bool(candidate.get("has_audiobook")),
@@ -228,10 +263,46 @@ def metadata_from_edition(edition: dict[str, Any], original: dict[str, Any] | No
         "series_id": (featured_series or {}).get("id"),
         "series_names": series_names,
         "featured_series": featured_series,
+        "user_book": _normalize_user_book(book.get("user_books")),
         "genres": _unique_list(book.get("genres")),
         "moods": _unique_list(book.get("moods")),
         "has_audiobook": bool(book.get("has_audiobook")),
         "has_ebook": bool(book.get("has_ebook")),
+        "compilation": bool(book.get("compilation")),
+        "object_type": "Book",
+        "url_path": "books",
+    }
+
+
+def metadata_from_book(book: dict[str, Any], fallback: dict[str, Any] | None = None) -> dict[str, Any]:
+    fallback = fallback or {}
+    contribution_authors, contribution_author_slugs = _author_names_and_slugs(book.get("contributions"))
+    featured_series = _normalize_featured_series(book.get("featured_series") or book.get("featured_book_series"))
+    return {
+        "title": book.get("title") or "",
+        "authors": contribution_authors or _listify(fallback.get("author_names")),
+        "author_slugs": contribution_author_slugs if contribution_authors else [],
+        "cover_image": _extract_image_url(book.get("image")),
+        "subtitle": book.get("subtitle") or "",
+        "description": book.get("description") or "",
+        "rating": book.get("rating"),
+        "ratings_count": book.get("ratings_count"),
+        "reviews_count": _positive_int(book.get("reviews_count")),
+        "users_read_count": _positive_int(book.get("users_read_count")),
+        "users_count": _positive_int(book.get("users_count")),
+        "release_date": book.get("release_date") or "",
+        "release_year": _release_year(book),
+        "pages": _positive_int(book.get("pages")),
+        "slug": book.get("slug") or "",
+        "book_id": book.get("id"),
+        "series_id": (featured_series or {}).get("id"),
+        "series_names": _unique_list(book.get("series_names") or fallback.get("series_names")),
+        "featured_series": featured_series,
+        "user_book": _normalize_user_book(book.get("user_books")),
+        "genres": _unique_list(book.get("genres") or fallback.get("genres")),
+        "moods": _unique_list(book.get("moods") or fallback.get("moods")),
+        "has_audiobook": bool(book.get("has_audiobook") or fallback.get("has_audiobook")),
+        "has_ebook": bool(book.get("has_ebook") or fallback.get("has_ebook")),
         "compilation": bool(book.get("compilation")),
         "object_type": "Book",
         "url_path": "books",
@@ -373,9 +444,10 @@ class HardcoverResolver:
                 series_names=series_names,
             )
             if candidate:
+                book_details = await self.client.book_details(candidate.get("id"))
                 return {
                     "original_mam": original,
-                    "hardcover": metadata_from_search_candidate(candidate, "Book"),
+                    "hardcover": metadata_from_book(book_details, candidate) if book_details else metadata_from_search_candidate(candidate, "Book"),
                     "match_score": score,
                     "query_path": "book",
                     "failure_reason": "",

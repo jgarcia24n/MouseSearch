@@ -16,6 +16,7 @@ import uuid
 import sqlite3
 import ipaddress
 from difflib import SequenceMatcher
+from typing import Any
 
 from datetime import datetime, timedelta
 from dotenv import load_dotenv, dotenv_values
@@ -41,7 +42,7 @@ RAPIDFUZZ_AVAILABLE = fuzz is not None
 
 from clients import get_torrent_client, get_client_display_name, get_available_clients
 from hashing import calculate_torrent_hash_from_url, calculate_torrent_hash_from_bytes
-from hardcover.client import HardcoverClient
+from hardcover.client import HardcoverAPIError, HardcoverClient
 from hardcover.resolver import HardcoverBatchRunner, HardcoverEnrichmentConfig, HardcoverResolver
 
 # --- SCHEDULER AND STATE SETUP ---
@@ -3917,6 +3918,47 @@ def set_cached_hardcover_series_response(series_id: int, payload: dict) -> None:
     }
 
 
+def serialize_hardcover_user_book(user_book: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(user_book, dict):
+        return None
+
+    try:
+        user_book_id = int(user_book.get("id"))
+        status_id = int(user_book.get("status_id"))
+    except (TypeError, ValueError):
+        return None
+    if user_book_id <= 0 or status_id <= 0:
+        return None
+
+    def positive_int(value):
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return None
+        return number if number >= 0 else None
+
+    def non_negative_float(value):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if number >= 0 else None
+
+    status_obj = user_book.get("user_book_status") or {}
+    status_label = str(status_obj.get("status") or "").strip() if isinstance(status_obj, dict) else ""
+    return {
+        "id": user_book_id,
+        "book_id": positive_int(user_book.get("book_id")),
+        "edition_id": positive_int(user_book.get("edition_id")),
+        "user_id": positive_int(user_book.get("user_id")),
+        "status_id": status_id,
+        "status": status_label,
+        "privacy_setting_id": positive_int(user_book.get("privacy_setting_id")) or 1,
+        "rating": non_negative_float(user_book.get("rating")),
+        "updated_at": str(user_book.get("updated_at") or "").strip(),
+    }
+
+
 def prune_hardcover_enrichment_batches() -> None:
     cutoff = time.time() - HARDCOVER_ENRICHMENT_BATCH_TTL_SECONDS
     expired = [
@@ -4111,6 +4153,109 @@ async def hardcover_series_details(series_id):
         if cached_payload is not None:
             return jsonify(cached_payload)
         return jsonify({"series": [], "error": str(exc)}), 500
+
+
+@app.route('/hardcover/user-book/status', methods=['POST'])
+async def hardcover_update_user_book_status():
+    client = create_hardcover_client()
+    if client is None:
+        return jsonify({
+            "status": "error",
+            "message": "Hardcover integration is not configured.",
+        }), 503
+
+    payload = await request.get_json(silent=True) or {}
+    action = str(payload.get("action") or "").strip().lower()
+    try:
+        book_id = int(payload.get("book_id") or 0)
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "Invalid Hardcover status request."}), 400
+
+    if book_id <= 0:
+        return jsonify({"status": "error", "message": "Missing Hardcover book ID."}), 400
+
+    status_id = None
+    if action != "remove":
+        try:
+            status_id = int(payload.get("status_id") or 0)
+        except (TypeError, ValueError):
+            return jsonify({"status": "error", "message": "Invalid Hardcover status request."}), 400
+        if status_id not in {1, 2, 3, 5}:
+            return jsonify({"status": "error", "message": "Unsupported Hardcover status."}), 400
+
+    try:
+        current_user_book = await client.user_book_for_book(book_id)
+        serialized_current = serialize_hardcover_user_book(current_user_book)
+        if serialized_current is None:
+            if action == "remove":
+                return jsonify({
+                    "status": "error",
+                    "message": "This Hardcover title is not in your library yet, so there is no status to remove.",
+                }), 404
+
+            assert status_id is not None
+            created_user_book = await client.create_user_book(
+                book_id,
+                status_id=status_id,
+                privacy_setting_id=1,
+            )
+            serialized_created = serialize_hardcover_user_book(created_user_book)
+            if serialized_created is None:
+                return jsonify({
+                    "status": "error",
+                    "message": "Hardcover returned an invalid status create response.",
+                }), 502
+            return jsonify({
+                "status": "success",
+                "message": "Hardcover status added.",
+                "book_id": book_id,
+                "user_book": serialized_created,
+            })
+
+        if action == "remove":
+            await client.delete_user_book(serialized_current["id"])
+            return jsonify({
+                "status": "success",
+                "message": "Hardcover status removed.",
+                "book_id": book_id,
+                "user_book": None,
+            })
+
+        assert status_id is not None
+        if serialized_current["status_id"] == status_id:
+            return jsonify({
+                "status": "success",
+                "message": "Hardcover status is already set.",
+                "book_id": book_id,
+                "user_book": serialized_current,
+            })
+
+        updated_user_book = await client.update_user_book_status(
+            serialized_current["id"],
+            status_id,
+            edition_id=serialized_current.get("edition_id"),
+            privacy_setting_id=serialized_current.get("privacy_setting_id"),
+            rating=serialized_current.get("rating"),
+        )
+    except HardcoverAPIError as exc:
+        return jsonify({
+            "status": "error",
+            "message": f"Hardcover status update failed: {exc}",
+        }), 502
+
+    serialized_updated = serialize_hardcover_user_book(updated_user_book)
+    if serialized_updated is None:
+        return jsonify({
+            "status": "error",
+            "message": "Hardcover returned an invalid status update response.",
+        }), 502
+
+    return jsonify({
+        "status": "success",
+        "message": "Hardcover status updated.",
+        "book_id": book_id,
+        "user_book": serialized_updated,
+    })
 
 
 @app.route('/mam/search', methods=['GET'])
