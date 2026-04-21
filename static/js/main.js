@@ -132,6 +132,7 @@ const HAPTIC_PATTERNS = Object.freeze({
     light: 10,
     search: [20, 35, 20],
     accordion: 12,
+    close: [12, 24, 12],
     menu: 20,
     tab: 12,
     save: [20, 45, 20],
@@ -179,6 +180,14 @@ function triggerHaptic(pattern = 'tap') {
     } catch (_) {
         // Ignore haptic errors so UI interactions are never blocked.
     }
+}
+
+function bindHapticClick(selector, pattern = 'tap') {
+    document.querySelectorAll(selector).forEach((element) => {
+        element.addEventListener('click', () => {
+            triggerHaptic(pattern);
+        });
+    });
 }
 
 function getTomSelectValues(instance) {
@@ -2630,6 +2639,15 @@ document.addEventListener("DOMContentLoaded", async function () {
             triggerHaptic('menu');
         });
     }
+
+    const advancedSearchButton = document.querySelector('[data-bs-target="#advancedSearchOffcanvas"]');
+    if (advancedSearchButton) {
+        advancedSearchButton.addEventListener('click', () => {
+            triggerHaptic('menu');
+        });
+    }
+
+    bindHapticClick('.btn-close[data-bs-dismiss="offcanvas"], .btn-close[data-bs-dismiss="modal"]', 'close');
 
     document.querySelectorAll('.accordion .accordion-button').forEach(btn => {
         btn.addEventListener('click', () => {
