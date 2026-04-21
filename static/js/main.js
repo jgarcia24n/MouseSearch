@@ -12,6 +12,9 @@ const redXIcon = `<img src="/static/icons/x_circle.svg" alt="not connected" styl
 const torrentHashMap = {};
 const hashToElementMap = new Map();
 const hardcoverEnrichmentPollers = new Map();
+const hardcoverEnrichmentObservers = new Map();
+const hardcoverEnrichmentQueueRequests = new Map();
+const HARDCOVER_LAZY_BUFFER_ROWS = 2;
 let lastClientStatus = null;
 let lastPerformedQuery = null;
 window.currentVipUntil = null;
@@ -501,6 +504,7 @@ function renderHardcoverStatusIcon(statusDef, extraClass = '') {
 
 function renderHardcoverStatusPicker(metadata, { torrentId = '', variant = 'compact' } = {}) {
     const userBook = normalizeHardcoverUserBook(metadata?.user_book);
+    const userBookKnown = metadata?.user_book_known === true || metadata?.user_book_known === 'true' || !!userBook;
     const objectType = String(metadata?.object_type || '').trim().toLowerCase();
     const bookId = Number(metadata?.book_id);
     const currentStatusId = Number(userBook?.status_id || 0);
@@ -541,6 +545,7 @@ function renderHardcoverStatusPicker(metadata, { torrentId = '', variant = 'comp
             data-book-id="${bookId}"
             data-torrent-id="${escapeHtml(safeTorrentId)}"
             data-current-status-id="${currentStatusId}"
+            data-user-book-known="${userBookKnown ? 'true' : 'false'}"
             data-busy="${isPending ? 'true' : 'false'}">
             <button type="button"
                 class="hardcover-status-trigger hardcover-status--${escapeHtml(statusDef.key)}${isPending ? ' is-pending' : ''}"
@@ -570,7 +575,7 @@ function getResultItemHardcoverData(resultItem) {
     }
 }
 
-function updateHardcoverUserBookStateForResultItem(resultItem, userBook) {
+function updateHardcoverUserBookStateForResultItem(resultItem, userBook, { userBookKnown = true } = {}) {
     const data = getResultItemHardcoverData(resultItem);
     const normalizedUserBook = normalizeHardcoverUserBook(userBook);
     const enrichment = data?.hardcover_enrichment;
@@ -579,6 +584,7 @@ function updateHardcoverUserBookStateForResultItem(resultItem, userBook) {
     const hardcover = enrichment.hardcover;
     if (String(hardcover.object_type || '').trim().toLowerCase() !== 'book') return false;
     hardcover.user_book = normalizedUserBook;
+    hardcover.user_book_known = !!userBookKnown;
     resultItem.dataset.json = JSON.stringify(data);
 
     const container = resultItem.querySelector('[data-hardcover-container]');
@@ -590,7 +596,7 @@ function updateHardcoverUserBookStateForResultItem(resultItem, userBook) {
     return true;
 }
 
-function syncHardcoverUserBookStatus(bookId, userBook) {
+function syncHardcoverUserBookStatus(bookId, userBook, { userBookKnown = true } = {}) {
     const normalizedBookId = Number(bookId);
     const normalizedUserBook = normalizeHardcoverUserBook(userBook);
     if (!Number.isFinite(normalizedBookId) || normalizedBookId <= 0) return;
@@ -599,7 +605,7 @@ function syncHardcoverUserBookStatus(bookId, userBook) {
         const data = getResultItemHardcoverData(resultItem);
         const matchedBookId = Number(data?.hardcover_enrichment?.hardcover?.book_id);
         if (matchedBookId === normalizedBookId) {
-            updateHardcoverUserBookStateForResultItem(resultItem, normalizedUserBook);
+            updateHardcoverUserBookStateForResultItem(resultItem, normalizedUserBook, { userBookKnown });
         }
     });
 
@@ -1510,6 +1516,8 @@ function applyHardcoverEnrichmentUpdate(payload) {
     resultItem.dataset.hardcoverState = enrichment.hardcover ? 'matched' : 'unresolved';
     resultItem.dataset.hardcoverScore = String(enrichment.match_score || 0);
     resultItem.dataset.hardcoverPath = enrichment.query_path || '';
+    const observer = hardcoverEnrichmentObservers.get(searchId);
+    if (observer) observer.unobserve(resultItem);
     updateResultJsonData(resultItem, { hardcover_enrichment: enrichment });
 
     const container = resultItem.querySelector('[data-hardcover-container]');
@@ -1555,26 +1563,24 @@ function updateHardcoverEnrichment(payload) {
     applyHardcoverEnrichmentUpdate(payload);
 }
 
-function pendingHardcoverSearchIds(scope = document) {
-    const ids = new Set();
-    scope.querySelectorAll('.result-item[data-hardcover-state="pending"][data-search-id]').forEach(item => {
-        const searchId = String(item.dataset.searchId || '').trim();
-        if (searchId) ids.add(searchId);
-    });
-    return [...ids];
+function escapeHardcoverSearchId(searchId) {
+    return window.CSS && CSS.escape
+        ? CSS.escape(searchId)
+        : String(searchId).replace(/["\\]/g, '\\$&');
+}
+
+function hardcoverRowsForSearch(searchId, scope = document) {
+    const escapedSearchId = escapeHardcoverSearchId(searchId);
+    return [...scope.querySelectorAll(`.result-item[data-search-id="${escapedSearchId}"][data-hardcover-state]`)];
 }
 
 function hasPendingHardcoverRows(searchId) {
-    const escapedSearchId = window.CSS && CSS.escape
-        ? CSS.escape(searchId)
-        : String(searchId).replace(/["\\]/g, '\\$&');
+    const escapedSearchId = escapeHardcoverSearchId(searchId);
     return !!document.querySelector(`.result-item[data-search-id="${escapedSearchId}"][data-hardcover-state="pending"]`);
 }
 
 function markPendingHardcoverRows(searchId, reason = 'enrichment_unavailable') {
-    const escapedSearchId = window.CSS && CSS.escape
-        ? CSS.escape(searchId)
-        : String(searchId).replace(/["\\]/g, '\\$&');
+    const escapedSearchId = escapeHardcoverSearchId(searchId);
     document.querySelectorAll(`.result-item[data-search-id="${escapedSearchId}"][data-hardcover-state="pending"]`).forEach(item => {
         updateHardcoverEnrichment({
             search_id: searchId,
@@ -1592,6 +1598,9 @@ function markPendingHardcoverRows(searchId, reason = 'enrichment_unavailable') {
 function stopHardcoverEnrichmentPolling() {
     hardcoverEnrichmentPollers.forEach(timerId => clearInterval(timerId));
     hardcoverEnrichmentPollers.clear();
+    hardcoverEnrichmentObservers.forEach(observer => observer.disconnect());
+    hardcoverEnrichmentObservers.clear();
+    hardcoverEnrichmentQueueRequests.clear();
 }
 
 async function pollHardcoverEnrichment(searchId) {
@@ -1627,12 +1636,124 @@ async function pollHardcoverEnrichment(searchId) {
     }
 }
 
-function startHardcoverEnrichmentPolling(scope = document) {
-    pendingHardcoverSearchIds(scope).forEach(searchId => {
-        if (hardcoverEnrichmentPollers.has(searchId)) return;
-        pollHardcoverEnrichment(searchId);
-        const timerId = setInterval(() => pollHardcoverEnrichment(searchId), 1000);
-        hardcoverEnrichmentPollers.set(searchId, timerId);
+function ensureHardcoverEnrichmentPolling(searchId) {
+    if (hardcoverEnrichmentPollers.has(searchId)) return;
+    pollHardcoverEnrichment(searchId);
+    const timerId = setInterval(() => pollHardcoverEnrichment(searchId), 1000);
+    hardcoverEnrichmentPollers.set(searchId, timerId);
+}
+
+function observeDeferredHardcoverRows(searchId, scope = document) {
+    const deferredRows = hardcoverRowsForSearch(searchId, scope).filter(item => item.dataset.hardcoverState === 'deferred');
+    if (!deferredRows.length) {
+        const existingObserver = hardcoverEnrichmentObservers.get(searchId);
+        if (existingObserver) {
+            existingObserver.disconnect();
+            hardcoverEnrichmentObservers.delete(searchId);
+        }
+        return;
+    }
+
+    let observer = hardcoverEnrichmentObservers.get(searchId);
+    if (!observer) {
+        observer = new IntersectionObserver(entries => {
+            entries.forEach(entry => {
+                if (!entry.isIntersecting) return;
+                const target = entry.target;
+                const rows = hardcoverRowsForSearch(searchId);
+                const index = rows.indexOf(target);
+                if (index < 0) return;
+                const start = Math.max(0, index - HARDCOVER_LAZY_BUFFER_ROWS);
+                const end = Math.min(rows.length - 1, index + HARDCOVER_LAZY_BUFFER_ROWS);
+                queueHardcoverEnrichmentRows(searchId, rows.slice(start, end + 1));
+            });
+        }, { threshold: 0.01 });
+        hardcoverEnrichmentObservers.set(searchId, observer);
+    }
+
+    deferredRows.forEach(item => observer.observe(item));
+}
+
+async function queueHardcoverEnrichmentRows(searchId, rows) {
+    const itemsToQueue = rows.filter(item => item && item.dataset.hardcoverState === 'deferred');
+    if (!itemsToQueue.length) return;
+
+    const torrentIds = [...new Set(itemsToQueue
+        .map(item => String(item.dataset.torrentId || '').trim())
+        .filter(Boolean)
+    )];
+    if (!torrentIds.length) return;
+
+    itemsToQueue.forEach(item => {
+        item.dataset.hardcoverState = 'pending';
+    });
+
+    const previousRequest = hardcoverEnrichmentQueueRequests.get(searchId) || Promise.resolve();
+    const queueRequest = previousRequest
+        .catch(() => undefined)
+        .then(async () => {
+            const response = await fetch(`/hardcover/enrichment/${encodeURIComponent(searchId)}/queue`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ torrent_ids: torrentIds }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || data.status !== 'success') {
+                throw new Error(data.message || `Hardcover queue request failed (HTTP ${response.status})`);
+            }
+            ensureHardcoverEnrichmentPolling(searchId);
+        })
+        .catch(error => {
+            console.warn('[HARDCOVER] Queueing failed:', error);
+            itemsToQueue.forEach(item => {
+                if (item.dataset.hardcoverState === 'pending') {
+                    item.dataset.hardcoverState = 'deferred';
+                }
+            });
+        })
+        .finally(() => {
+            if (hardcoverEnrichmentQueueRequests.get(searchId) === queueRequest) {
+                hardcoverEnrichmentQueueRequests.delete(searchId);
+            }
+            observeDeferredHardcoverRows(searchId);
+        });
+
+    hardcoverEnrichmentQueueRequests.set(searchId, queueRequest);
+    await queueRequest;
+}
+
+function queueInitialHardcoverRows(searchId, scope = document) {
+    const rows = hardcoverRowsForSearch(searchId, scope);
+    if (!rows.length) return;
+
+    const visibleIndexes = [];
+    rows.forEach((item, index) => {
+        const rect = item.getBoundingClientRect();
+        if (rect.bottom > 0 && rect.top < window.innerHeight) {
+            visibleIndexes.push(index);
+        }
+    });
+
+    const start = visibleIndexes.length
+        ? Math.max(0, visibleIndexes[0] - HARDCOVER_LAZY_BUFFER_ROWS)
+        : 0;
+    const end = visibleIndexes.length
+        ? Math.min(rows.length - 1, visibleIndexes[visibleIndexes.length - 1] + HARDCOVER_LAZY_BUFFER_ROWS)
+        : Math.min(rows.length - 1, HARDCOVER_LAZY_BUFFER_ROWS);
+
+    queueHardcoverEnrichmentRows(searchId, rows.slice(start, end + 1));
+}
+
+function startHardcoverEnrichmentLoading(scope = document) {
+    const ids = new Set();
+    scope.querySelectorAll('.result-item[data-search-id][data-hardcover-state]').forEach(item => {
+        const searchId = String(item.dataset.searchId || '').trim();
+        if (searchId && item.dataset.hardcoverState !== 'disabled') ids.add(searchId);
+    });
+
+    ids.forEach(searchId => {
+        queueInitialHardcoverRows(searchId, scope);
+        observeDeferredHardcoverRows(searchId, scope);
     });
 }
 
@@ -2561,6 +2682,63 @@ document.addEventListener("DOMContentLoaded", async function () {
         });
     };
 
+    const findHardcoverStatusPicker = (bookId, torrentId = '') => {
+        const normalizedBookId = Number(bookId);
+        if (!Number.isFinite(normalizedBookId) || normalizedBookId <= 0) return null;
+        const safeTorrentId = String(torrentId || '').trim();
+        if (safeTorrentId) {
+            const escapedTorrentId = window.CSS && CSS.escape
+                ? CSS.escape(safeTorrentId)
+                : safeTorrentId.replace(/["\\]/g, '\\$&');
+            const exactMatch = document.querySelector(
+                `[data-hardcover-status-picker][data-book-id="${normalizedBookId}"][data-torrent-id="${escapedTorrentId}"]`
+            );
+            if (exactMatch) return exactMatch;
+        }
+        return document.querySelector(`[data-hardcover-status-picker][data-book-id="${normalizedBookId}"]`);
+    };
+
+    const openHardcoverStatusPicker = (picker) => {
+        if (!picker) return;
+        closeHardcoverStatusPickers(picker);
+        picker.classList.add('is-open');
+        hardcoverStatusPickerOpenedAt = performance.now();
+        picker.closest('.result-card')?.classList.add('result-card--status-open');
+        const pickerToggle = picker.querySelector('[data-hardcover-status-toggle]');
+        if (pickerToggle) {
+            pickerToggle.setAttribute('aria-expanded', 'true');
+        }
+    };
+
+    const hydrateHardcoverUserBookStatus = async (picker) => {
+        if (!picker || picker.dataset.userBookKnown === 'true' || picker.dataset.userBookLoading === 'true') {
+            return picker;
+        }
+
+        const bookId = Number(picker.dataset.bookId || 0);
+        const torrentId = String(picker.dataset.torrentId || '').trim();
+        if (!Number.isFinite(bookId) || bookId <= 0) return picker;
+
+        picker.dataset.userBookLoading = 'true';
+        setHardcoverStatusPickerBusy(picker, true);
+
+        try {
+            const response = await fetch(`/hardcover/user-book/${bookId}`, { cache: 'no-store' });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || data.status !== 'success') {
+                throw new Error(data.message || `Hardcover status lookup failed (HTTP ${response.status})`);
+            }
+            syncHardcoverUserBookStatus(bookId, data.user_book, { userBookKnown: true });
+        } catch (error) {
+            console.warn('[HARDCOVER] Status hydrate failed:', error);
+        }
+
+        const refreshedPicker = findHardcoverStatusPicker(bookId, torrentId) || picker;
+        refreshedPicker.dataset.userBookLoading = 'false';
+        setHardcoverStatusPickerBusy(refreshedPicker, false);
+        return refreshedPicker;
+    };
+
     const submitHardcoverStatusChange = async (picker, statusId, { action = '' } = {}) => {
         if (!picker || picker.dataset.busy === 'true') return;
         const bookId = Number(picker.dataset.bookId || 0);
@@ -2599,7 +2777,7 @@ document.addEventListener("DOMContentLoaded", async function () {
         }
     };
 
-    document.addEventListener('click', (event) => {
+    document.addEventListener('click', async (event) => {
         const removeButton = event.target.closest('[data-hardcover-status-remove]');
         if (removeButton) {
             event.preventDefault();
@@ -2625,14 +2803,15 @@ document.addEventListener("DOMContentLoaded", async function () {
             event.preventDefault();
             event.stopImmediatePropagation();
             triggerHaptic('tap');
-            const picker = toggle.closest('[data-hardcover-status-picker]');
+            let picker = toggle.closest('[data-hardcover-status-picker]');
             if (!picker) return;
             const shouldOpen = !picker.classList.contains('is-open');
-            closeHardcoverStatusPickers(shouldOpen ? picker : null);
-            picker.classList.toggle('is-open', shouldOpen);
-            hardcoverStatusPickerOpenedAt = shouldOpen ? performance.now() : 0;
-            picker.closest('.result-card')?.classList.toggle('result-card--status-open', shouldOpen);
-            toggle.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+            if (!shouldOpen) {
+                closeHardcoverStatusPickers();
+                return;
+            }
+            picker = await hydrateHardcoverUserBookStatus(picker);
+            openHardcoverStatusPicker(picker);
             return;
         }
 
@@ -5584,7 +5763,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                 refreshCategories();
                 initializeSnatchedTorrents();
                 applyHideDownloadedResultsFilter();
-                startHardcoverEnrichmentPolling(resultsContainer);
+                startHardcoverEnrichmentLoading(resultsContainer);
             })
             .catch(error => {
                 const errorText = error?.message ? `Search failed: ${error.message}` : 'Search failed.';

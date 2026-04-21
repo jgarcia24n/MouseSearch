@@ -1,4 +1,6 @@
+import copy
 import asyncio
+import re
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -152,6 +154,8 @@ def _normalize_featured_series(featured: Any) -> dict[str, Any] | None:
 
 
 def _normalize_user_book(user_books: Any) -> dict[str, Any] | None:
+    if isinstance(user_books, dict):
+        user_books = [user_books]
     if not isinstance(user_books, list):
         return None
 
@@ -222,6 +226,7 @@ def metadata_from_search_candidate(candidate: dict[str, Any], query_type: str) -
         "series_names": _unique_list(candidate.get("series_names")) if is_book else ([title] if is_series and title else []),
         "featured_series": featured_series,
         "user_book": _normalize_user_book(candidate.get("user_books")),
+        "user_book_known": isinstance(candidate.get("user_books"), list),
         "genres": _unique_list(candidate.get("genres")),
         "moods": _unique_list(candidate.get("moods")),
         "has_audiobook": bool(candidate.get("has_audiobook")),
@@ -264,6 +269,7 @@ def metadata_from_edition(edition: dict[str, Any], original: dict[str, Any] | No
         "series_names": series_names,
         "featured_series": featured_series,
         "user_book": _normalize_user_book(book.get("user_books")),
+        "user_book_known": isinstance(book.get("user_books"), list),
         "genres": _unique_list(book.get("genres")),
         "moods": _unique_list(book.get("moods")),
         "has_audiobook": bool(book.get("has_audiobook")),
@@ -299,6 +305,7 @@ def metadata_from_book(book: dict[str, Any], fallback: dict[str, Any] | None = N
         "series_names": _unique_list(book.get("series_names") or fallback.get("series_names")),
         "featured_series": featured_series,
         "user_book": _normalize_user_book(book.get("user_books")),
+        "user_book_known": isinstance(book.get("user_books"), list),
         "genres": _unique_list(book.get("genres") or fallback.get("genres")),
         "moods": _unique_list(book.get("moods") or fallback.get("moods")),
         "has_audiobook": bool(book.get("has_audiobook") or fallback.get("has_audiobook")),
@@ -393,6 +400,20 @@ def _series_max_readers(series: dict[str, Any]) -> int | None:
     return max_readers
 
 
+def _resolution_key_text(value: Any) -> str:
+    text = str(value or "").lower()
+    text = re.sub(r"&", " and ", text)
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def clone_enrichment_for_result(result: dict[str, Any], enrichment: dict[str, Any]) -> dict[str, Any]:
+    cloned = copy.deepcopy(enrichment)
+    cloned["original_mam"] = mam_original_metadata(result)
+    cloned["cleaned_query"] = clean_title(result.get("title"))
+    return cloned
+
+
 class HardcoverResolver:
     def __init__(self, client: HardcoverClient, config: HardcoverEnrichmentConfig):
         self.client = client
@@ -407,6 +428,23 @@ class HardcoverResolver:
             "failure_reason": reason,
             "cleaned_query": cleaned_query,
         }
+
+    def dedupe_key(self, result: dict[str, Any]) -> str | None:
+        isbn_values = sorted({str(isbn or "").strip().upper() for isbn in extract_isbns(result) if str(isbn or "").strip()})
+        if isbn_values:
+            return f"isbn:{'|'.join(isbn_values)}"
+
+        cleaned_query = _resolution_key_text(clean_title(result.get("title")))
+        author_name = _resolution_key_text(detect_author_name(result))
+        series_names = sorted({
+            _resolution_key_text(name)
+            for name in detect_series_names(result)
+            if _resolution_key_text(name)
+        })
+
+        if not cleaned_query and not author_name and not series_names:
+            return None
+        return f"query:{cleaned_query}|author:{author_name}|series:{'|'.join(series_names)}"
 
     async def enrich_result(self, result: dict[str, Any]) -> dict[str, Any]:
         cleaned_query = clean_title(result.get("title"))
@@ -444,10 +482,9 @@ class HardcoverResolver:
                 series_names=series_names,
             )
             if candidate:
-                book_details = await self.client.book_details(candidate.get("id"))
                 return {
                     "original_mam": original,
-                    "hardcover": metadata_from_book(book_details, candidate) if book_details else metadata_from_search_candidate(candidate, "Book"),
+                    "hardcover": metadata_from_search_candidate(candidate, "Book"),
                     "match_score": score,
                     "query_path": "book",
                     "failure_reason": "",
@@ -537,13 +574,109 @@ class HardcoverBatchRunner:
         self,
         results: list[dict[str, Any]],
         on_result: Callable[[int, dict[str, Any], dict[str, Any]], Awaitable[None]],
+        *,
+        shared_cache: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         semaphore = asyncio.Semaphore(self.concurrency)
+        shared_cache = shared_cache if shared_cache is not None else {}
+        grouped_results: dict[str, list[tuple[int, dict[str, Any]]]] = {}
 
-        async def worker(index: int, result: dict[str, Any]) -> None:
+        for index, result in enumerate(results):
+            dedupe_key = self.resolver.dedupe_key(result)
+            group_key = dedupe_key or f"row:{index}"
+            grouped_results.setdefault(group_key, []).append((index, result))
+
+        primary_results = [items[0][1] for items in grouped_results.values()]
+        await self._prime_client_cache(primary_results)
+
+        async def worker(group_key: str, items: list[tuple[int, dict[str, Any]]]) -> list[tuple[int, dict[str, Any], dict[str, Any]]]:
             async with semaphore:
-                enrichment = await self.resolver.enrich_result(result)
-                await on_result(index, result, enrichment)
+                base_enrichment = shared_cache.get(group_key)
+                if base_enrichment is None:
+                    primary_result = items[0][1]
+                    base_enrichment = await self.resolver.enrich_result(primary_result)
+                    if not group_key.startswith("row:"):
+                        shared_cache[group_key] = copy.deepcopy(base_enrichment)
+                return [
+                    (index, result, clone_enrichment_for_result(result, base_enrichment))
+                    for index, result in items
+                ]
 
-        tasks = [asyncio.create_task(worker(index, result)) for index, result in enumerate(results)]
-        await asyncio.gather(*tasks)
+        tasks = [
+            asyncio.create_task(worker(group_key, items))
+            for group_key, items in grouped_results.items()
+        ]
+        grouped_enrichments = await asyncio.gather(*tasks)
+        entries = [
+            item
+            for group in grouped_enrichments
+            for item in group
+        ]
+        await self._hydrate_user_books(entries)
+        for index, result, enrichment in sorted(entries, key=lambda item: int(item[0])):
+            await on_result(index, result, enrichment)
+
+    async def _prime_client_cache(self, results: list[dict[str, Any]]) -> None:
+        if not results:
+            return
+
+        isbns: list[str] = []
+        searches: list[tuple[str, str, int]] = []
+        for result in results:
+            isbns.extend(extract_isbns(result))
+            cleaned_query = clean_title(result.get("title"))
+            if cleaned_query:
+                searches.append((cleaned_query, "Book", self.resolver.config.per_page))
+
+        if isbns:
+            await self.resolver.client.prefetch_editions_by_isbns(isbns)
+        if searches:
+            await self.resolver.client.prefetch_searches(searches)
+
+    async def _hydrate_user_books(self, entries: list[tuple[int, dict[str, Any], dict[str, Any]]]) -> None:
+        if not self.resolver.client.user_id:
+            return
+
+        book_ids: list[int] = []
+        seen_ids: set[int] = set()
+        for _, _, enrichment in entries:
+            metadata = enrichment.get("hardcover") or {}
+            if not isinstance(metadata, dict):
+                continue
+            if str(metadata.get("object_type") or "").strip().lower() != "book":
+                continue
+            if metadata.get("user_book_known") is True:
+                continue
+            try:
+                book_id = int(metadata.get("book_id"))
+            except (TypeError, ValueError):
+                continue
+            if book_id <= 0 or book_id in seen_ids:
+                continue
+            seen_ids.add(book_id)
+            book_ids.append(book_id)
+
+        if not book_ids:
+            return
+
+        try:
+            user_books = await self.resolver.client.user_books_for_books(book_ids)
+        except HardcoverAPIError:
+            return
+
+        for _, _, enrichment in entries:
+            metadata = enrichment.get("hardcover") or {}
+            if not isinstance(metadata, dict):
+                continue
+            if str(metadata.get("object_type") or "").strip().lower() != "book":
+                continue
+            if metadata.get("user_book_known") is True:
+                continue
+            try:
+                book_id = int(metadata.get("book_id"))
+            except (TypeError, ValueError):
+                continue
+            if book_id <= 0:
+                continue
+            metadata["user_book"] = _normalize_user_book(user_books.get(book_id))
+            metadata["user_book_known"] = True

@@ -13,42 +13,37 @@ import httpx
 
 
 logger = logging.getLogger(__name__)
+HARDCOVER_BATCH_QUERY_SIZE = 20
 
 
 class HardcoverAPIError(Exception):
     pass
 
 
-class AsyncTokenBucket:
+class AsyncRequestPacer:
     def __init__(self, limit: int, period_seconds: float):
         self.limit = max(1, int(limit))
         self.period_seconds = float(period_seconds)
-        self.tokens = float(self.limit)
-        self.updated_at = time.monotonic()
+        self.min_interval_seconds = self.period_seconds / float(self.limit)
+        self.next_available_at = time.monotonic()
         self.lock = asyncio.Lock()
 
     async def acquire(self) -> float:
-        waited_total = 0.0
-        while True:
-            async with self.lock:
-                now = time.monotonic()
-                elapsed = now - self.updated_at
-                self.updated_at = now
-                refill_rate = self.limit / self.period_seconds
-                self.tokens = min(float(self.limit), self.tokens + elapsed * refill_rate)
-                if self.tokens >= 1.0:
-                    self.tokens -= 1.0
-                    return waited_total
-                wait_for = (1.0 - self.tokens) / refill_rate
-            waited_total += wait_for
+        async with self.lock:
+            now = time.monotonic()
+            wait_for = max(0.0, self.next_available_at - now)
+            scheduled_at = now + wait_for
+            self.next_available_at = scheduled_at + self.min_interval_seconds
+        if wait_for > 0:
             await asyncio.sleep(wait_for)
+        return wait_for
 
 
 class HardcoverRateController:
     def __init__(self, limit: int, period_seconds: float):
         self.limit = max(1, int(limit))
         self.period_seconds = float(period_seconds)
-        self.bucket = AsyncTokenBucket(self.limit, self.period_seconds)
+        self.pacer = AsyncRequestPacer(self.limit, self.period_seconds)
         self.cooldown_until = 0.0
         self.cooldown_lock = asyncio.Lock()
 
@@ -62,7 +57,7 @@ class HardcoverRateController:
                 await asyncio.sleep(wait_for)
                 continue
 
-            waited_total += await self.bucket.acquire()
+            waited_total += await self.pacer.acquire()
 
             async with self.cooldown_lock:
                 wait_for = self.cooldown_until - time.monotonic()
@@ -136,7 +131,37 @@ def graphql_operation_name(query: str) -> str:
     return "anonymous"
 
 
+def graphql_operation_type(query: str) -> str:
+    match = re.search(r"\b(query|mutation|subscription)\b", str(query or ""))
+    if match:
+        return match.group(1).lower()
+    return "query"
+
+
+def graphql_inflight_key(query: str, variables: dict[str, Any], cache_key: str | None = None) -> str | None:
+    operation_type = graphql_operation_type(query)
+    if operation_type != "query":
+        return None
+    if cache_key:
+        return f"cache:{cache_key}"
+    try:
+        normalized_variables = json.dumps(variables, sort_keys=True, separators=(",", ":"), default=str)
+    except TypeError:
+        normalized_variables = repr(variables)
+    digest = hashlib.sha256(f"{str(query or '').strip()}::{normalized_variables}".encode("utf-8")).hexdigest()
+    return f"query:{digest}"
+
+
 class HardcoverClient:
+    SEARCH_FIELDS = """
+        ids
+        results
+        query
+        query_type
+        page
+        per_page
+    """
+
     BOOK_FIELDS = """
       id
       title
@@ -195,12 +220,7 @@ class HardcoverClient:
     SEARCH_QUERY = """
     query HardcoverSearch($query: String!, $query_type: String!, $per_page: Int!, $page: Int!) {
       search(query: $query, query_type: $query_type, per_page: $per_page, page: $page) {
-        ids
-        results
-        query
-        query_type
-        page
-        per_page
+""" + SEARCH_FIELDS + """
       }
     }
     """
@@ -290,6 +310,32 @@ class HardcoverClient:
         }
         order_by: {updated_at: desc}
         limit: 1
+      ) {
+        id
+        book_id
+        edition_id
+        user_id
+        status_id
+        rating
+        privacy_setting_id
+        updated_at
+        user_book_status {
+          id
+          status
+        }
+      }
+    }
+    """
+
+    USER_BOOKS_FOR_BOOKS_QUERY = """
+    query UserBooksForBooks($book_ids: [Int!]!, $user_id: Int!) {
+      user_books(
+        where: {
+          book_id: {_in: $book_ids}
+          user_id: {_eq: $user_id}
+        }
+        distinct_on: book_id
+        order_by: [{book_id: asc}, {updated_at: desc}]
       ) {
         id
         book_id
@@ -423,6 +469,8 @@ class HardcoverClient:
         )
         self._client: httpx.AsyncClient | None = None
         self._cache: dict[str, Any] = {}
+        self._inflight: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        self._inflight_lock = asyncio.Lock()
 
     def authorization_header(self) -> str:
         token = str(self.token or "").strip()
@@ -499,61 +547,89 @@ class HardcoverClient:
         await self.open()
         assert self._client is not None
         operation_name = graphql_operation_name(query)
+        inflight_key = graphql_inflight_key(query, variables, cache_key)
+        owns_inflight = False
+        inflight_future: asyncio.Future[dict[str, Any]] | None = None
+
+        if inflight_key:
+            async with self._inflight_lock:
+                existing_future = self._inflight.get(inflight_key)
+                if existing_future is not None:
+                    inflight_future = existing_future
+                else:
+                    inflight_future = asyncio.get_running_loop().create_future()
+                    self._inflight[inflight_key] = inflight_future
+                    owns_inflight = True
+            if not owns_inflight and inflight_future is not None:
+                return copy.deepcopy(await inflight_future)
 
         retry_429 = 3
         attempt = 0
-        while True:
-            waited_for = await self.rate_controller.acquire()
-            if waited_for >= 1.0:
-                logger.warning(
-                    "[HARDCOVER-RATE] Delayed request op=%s wait_s=%.3f cache_key=%s endpoint=%s",
-                    operation_name,
-                    waited_for,
-                    cache_key or "",
-                    self.endpoint,
-                )
-            try:
-                response = await self._client.post(
-                    self.endpoint,
-                    json={"query": query, "variables": variables},
-                )
-            except httpx.TimeoutException as exc:
-                raise HardcoverAPIError(f"timeout: {exc}") from exc
-            except httpx.RequestError as exc:
-                raise HardcoverAPIError(f"request_error: {exc}") from exc
+        try:
+            while True:
+                waited_for = await self.rate_controller.acquire()
+                if waited_for >= 1.0:
+                    logger.warning(
+                        "[HARDCOVER-RATE] Delayed request op=%s wait_s=%.3f cache_key=%s endpoint=%s",
+                        operation_name,
+                        waited_for,
+                        cache_key or "",
+                        self.endpoint,
+                    )
+                try:
+                    response = await self._client.post(
+                        self.endpoint,
+                        json={"query": query, "variables": variables},
+                    )
+                except httpx.TimeoutException as exc:
+                    raise HardcoverAPIError(f"timeout: {exc}") from exc
+                except httpx.RequestError as exc:
+                    raise HardcoverAPIError(f"request_error: {exc}") from exc
 
-            if response.status_code == 429 and attempt < retry_429:
-                retry_after = response.headers.get("Retry-After")
-                cooldown_seconds = await self.rate_controller.note_rate_limited(attempt, retry_after)
-                logger.warning(
-                    "[HARDCOVER-RATE] Received 429 op=%s attempt=%s retry_after=%s cooldown_s=%.3f endpoint=%s",
-                    operation_name,
-                    attempt + 1,
-                    retry_after or "",
-                    cooldown_seconds,
-                    self.endpoint,
-                )
-                attempt += 1
-                continue
+                if response.status_code == 429 and attempt < retry_429:
+                    retry_after = response.headers.get("Retry-After")
+                    cooldown_seconds = await self.rate_controller.note_rate_limited(attempt, retry_after)
+                    logger.warning(
+                        "[HARDCOVER-RATE] Received 429 op=%s attempt=%s retry_after=%s cooldown_s=%.3f endpoint=%s",
+                        operation_name,
+                        attempt + 1,
+                        retry_after or "",
+                        cooldown_seconds,
+                        self.endpoint,
+                    )
+                    attempt += 1
+                    continue
 
-            if 500 <= response.status_code <= 599 and attempt < retry_5xx:
-                await asyncio.sleep(min(4.0, 0.5 * (2 ** attempt)))
-                attempt += 1
-                continue
+                if 500 <= response.status_code <= 599 and attempt < retry_5xx:
+                    await asyncio.sleep(min(4.0, 0.5 * (2 ** attempt)))
+                    attempt += 1
+                    continue
 
-            if response.status_code >= 400:
-                raise HardcoverAPIError(f"http_{response.status_code}")
+                if response.status_code >= 400:
+                    raise HardcoverAPIError(f"http_{response.status_code}")
 
-            payload = response.json()
-            if payload.get("errors"):
-                first = payload["errors"][0]
-                message = first.get("message") if isinstance(first, dict) else str(first)
-                raise HardcoverAPIError(f"graphql_error: {message}")
+                payload = response.json()
+                if payload.get("errors"):
+                    first = payload["errors"][0]
+                    message = first.get("message") if isinstance(first, dict) else str(first)
+                    raise HardcoverAPIError(f"graphql_error: {message}")
 
-            data = payload.get("data") or {}
-            if cache_key:
-                self._cache[cache_key] = copy.deepcopy(data)
-            return data
+                data = payload.get("data") or {}
+                if cache_key:
+                    self._cache[cache_key] = copy.deepcopy(data)
+                if owns_inflight and inflight_future is not None and not inflight_future.done():
+                    inflight_future.set_result(copy.deepcopy(data))
+                return data
+        except Exception as exc:
+            if owns_inflight and inflight_future is not None and not inflight_future.done():
+                inflight_future.set_exception(exc)
+            raise
+        finally:
+            if owns_inflight and inflight_key:
+                async with self._inflight_lock:
+                    current_future = self._inflight.get(inflight_key)
+                    if current_future is inflight_future:
+                        self._inflight.pop(inflight_key, None)
 
     async def search(self, query: str, query_type: str = "Book", per_page: int = 5) -> list[dict[str, Any]]:
         normalized_type = str(query_type or "Book").strip().title()
@@ -573,6 +649,65 @@ class HardcoverClient:
         )
         search_data = data.get("search") or {}
         return normalize_search_results(search_data.get("results") or [])
+
+    async def prefetch_searches(self, searches: list[tuple[str, str, int]]) -> None:
+        pending: list[tuple[str, str, int, str]] = []
+        seen: set[str] = set()
+
+        for raw_query, raw_query_type, raw_per_page in searches:
+            normalized_query = str(raw_query or "").strip()
+            normalized_type = str(raw_query_type or "Book").strip().title()
+            try:
+                normalized_per_page = int(raw_per_page)
+            except (TypeError, ValueError):
+                normalized_per_page = 5
+            if not normalized_query:
+                continue
+            cache_key = f"search:{normalized_type.lower()}:{normalized_query.lower()}:{normalized_per_page}"
+            if cache_key in self._cache or cache_key in seen:
+                continue
+            seen.add(cache_key)
+            pending.append((normalized_query, normalized_type, normalized_per_page, cache_key))
+
+        for start in range(0, len(pending), HARDCOVER_BATCH_QUERY_SIZE):
+            chunk = pending[start:start + HARDCOVER_BATCH_QUERY_SIZE]
+            if not chunk:
+                continue
+
+            variable_defs: list[str] = []
+            selections: list[str] = []
+            variables: dict[str, Any] = {}
+
+            for index, (query, query_type, per_page, _) in enumerate(chunk):
+                alias = f"s{index}"
+                query_var = f"query_{index}"
+                type_var = f"type_{index}"
+                per_page_var = f"per_page_{index}"
+                variable_defs.extend([
+                    f"${query_var}: String!",
+                    f"${type_var}: String!",
+                    f"${per_page_var}: Int!",
+                ])
+                variables[query_var] = query
+                variables[type_var] = query_type
+                variables[per_page_var] = per_page
+                selections.append(
+                    f"""
+      {alias}: search(
+        query: ${query_var}
+        query_type: ${type_var}
+        per_page: ${per_page_var}
+        page: 1
+      ) {{
+{self.SEARCH_FIELDS}
+      }}""".rstrip()
+                )
+
+            query = f"query BatchHardcoverSearch({', '.join(variable_defs)}) {{\n" + "\n".join(selections) + "\n}"
+            data = await self.graphql(query, variables, cache_key=None)
+
+            for index, (_, _, _, cache_key) in enumerate(chunk):
+                self._cache[cache_key] = copy.deepcopy({"search": data.get(f"s{index}") or {}})
 
     async def edition_by_isbn(self, isbn: str) -> dict[str, Any] | None:
         isbn = str(isbn or "").strip().upper()
@@ -594,6 +729,59 @@ class HardcoverClient:
         if isinstance(editions, list) and editions:
             return editions[0]
         return None
+
+    async def prefetch_editions_by_isbns(self, isbns: list[str]) -> None:
+        pending: list[tuple[str, str]] = []
+        seen: set[str] = set()
+
+        for raw_isbn in isbns:
+            isbn = str(raw_isbn or "").strip().upper()
+            if not isbn:
+                continue
+            cache_key = f"edition:isbn:{isbn}"
+            if cache_key in self._cache or cache_key in seen:
+                continue
+            seen.add(cache_key)
+            pending.append((isbn, cache_key))
+
+        for start in range(0, len(pending), HARDCOVER_BATCH_QUERY_SIZE):
+            chunk = pending[start:start + HARDCOVER_BATCH_QUERY_SIZE]
+            if not chunk:
+                continue
+
+            variable_defs: list[str] = []
+            selections: list[str] = []
+            variables: dict[str, Any] = {}
+            if self.user_id:
+                variable_defs.append("$user_id: Int!")
+                variables["user_id"] = self.user_id
+
+            for index, (isbn, _) in enumerate(chunk):
+                alias = f"e{index}"
+                isbn_var = f"isbn_{index}"
+                variable_defs.append(f"${isbn_var}: String!")
+                variables[isbn_var] = isbn
+                isbn_filter = "isbn_13" if len(isbn) == 13 else "isbn_10"
+                book_fields = self.BOOK_FIELDS + (self.USER_BOOK_FIELDS if self.user_id else "")
+                selections.append(
+                    f"""
+      {alias}: editions(where: {{{isbn_filter}: {{_eq: ${isbn_var}}}}}, limit: 1) {{
+        id
+        title
+        isbn_10
+        isbn_13
+        release_date
+        book {{
+{book_fields}
+        }}
+      }}""".rstrip()
+                )
+
+            query = f"query BatchEditionByISBN({', '.join(variable_defs)}) {{\n" + "\n".join(selections) + "\n}"
+            data = await self.graphql(query, variables, cache_key=None)
+
+            for index, (_, cache_key) in enumerate(chunk):
+                self._cache[cache_key] = copy.deepcopy({"editions": data.get(f"e{index}") or []})
 
     async def book_details(self, book_id: int, *, use_cache: bool = True) -> dict[str, Any] | None:
         try:
@@ -636,6 +824,47 @@ class HardcoverClient:
         if isinstance(user_books, list) and user_books:
             return user_books[0]
         return None
+
+    async def user_books_for_books(self, book_ids: list[int]) -> dict[int, dict[str, Any]]:
+        if not self.user_id:
+            return {}
+
+        normalized_ids: list[int] = []
+        seen_ids: set[int] = set()
+        for raw_book_id in book_ids:
+            try:
+                normalized_id = int(raw_book_id)
+            except (TypeError, ValueError):
+                continue
+            if normalized_id <= 0 or normalized_id in seen_ids:
+                continue
+            seen_ids.add(normalized_id)
+            normalized_ids.append(normalized_id)
+
+        if not normalized_ids:
+            return {}
+
+        data = await self.graphql(
+            self.USER_BOOKS_FOR_BOOKS_QUERY,
+            {"book_ids": normalized_ids, "user_id": self.user_id},
+            cache_key=None,
+        )
+        user_books = data.get("user_books") or []
+        mapping: dict[int, dict[str, Any]] = {}
+        if not isinstance(user_books, list):
+            return mapping
+
+        for item in user_books:
+            if not isinstance(item, dict):
+                continue
+            try:
+                book_id = int(item.get("book_id"))
+            except (TypeError, ValueError):
+                continue
+            if book_id <= 0 or book_id in mapping:
+                continue
+            mapping[book_id] = item
+        return mapping
 
     async def update_user_book_status(
         self,

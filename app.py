@@ -988,7 +988,7 @@ FALLBACK_CONFIG = {
     "HARDCOVER_API_TOKEN": "",
     "HARDCOVER_API_URL": "https://api.hardcover.app/v1/graphql",
     "HARDCOVER_USER_AGENT": "MouseSearch Hardcover Enrichment",
-    "HARDCOVER_RATE_LIMIT": 55,
+    "HARDCOVER_RATE_LIMIT": 60,
     "HARDCOVER_MATCH_THRESHOLD": 78.0,
     "HARDCOVER_CONCURRENCY": 6,
     "HARDCOVER_SEARCH_PER_PAGE": 5,
@@ -3969,25 +3969,40 @@ def prune_hardcover_enrichment_batches() -> None:
         hardcover_enrichment_batches.pop(search_id, None)
 
 
-def initialize_hardcover_enrichment_batch(search_id: str, total: int) -> None:
+def initialize_hardcover_enrichment_batch(search_id: str, results: list[dict]) -> None:
     prune_hardcover_enrichment_batches()
     now = time.time()
+    source_results: dict[str, dict[str, Any]] = {}
+    for index, result in enumerate(results):
+        torrent_id = str(result.get("id") or "")
+        if not torrent_id:
+            continue
+        source_results[torrent_id] = {
+            "index": index,
+            "result": result,
+        }
     hardcover_enrichment_batches[search_id] = {
         "created_at": now,
         "updated_at": now,
-        "completed": False,
-        "total": int(total),
+        "completed": True,
+        "total": len(results),
         "results": {},
+        "source_results": source_results,
+        "queued_torrent_ids": set(),
+        "shared_enrichments": {},
     }
 
 
 def store_hardcover_enrichment_result(search_id: str, index: int, torrent_id: str, enrichment: dict) -> None:
     batch = hardcover_enrichment_batches.get(search_id)
     if batch is None:
-        initialize_hardcover_enrichment_batch(search_id, 0)
+        initialize_hardcover_enrichment_batch(search_id, [])
         batch = hardcover_enrichment_batches[search_id]
 
     batch["updated_at"] = time.time()
+    queued_torrent_ids = batch.get("queued_torrent_ids")
+    if isinstance(queued_torrent_ids, set):
+        queued_torrent_ids.discard(torrent_id)
     batch["results"][torrent_id] = {
         "index": index,
         "torrent_id": torrent_id,
@@ -3995,9 +4010,49 @@ def store_hardcover_enrichment_result(search_id: str, index: int, torrent_id: st
     }
 
 
+def queue_hardcover_enrichment_results(search_id: str, torrent_ids: list[Any]) -> list[dict[str, Any]]:
+    batch = hardcover_enrichment_batches.get(search_id)
+    if batch is None:
+        return []
+
+    source_results = batch.get("source_results") or {}
+    queued_torrent_ids = batch.setdefault("queued_torrent_ids", set())
+    results_by_torrent = batch.get("results") or {}
+    selected_entries: list[dict[str, Any]] = []
+    seen_torrent_ids: set[str] = set()
+
+    for raw_torrent_id in torrent_ids:
+        torrent_id = str(raw_torrent_id or "").strip()
+        if not torrent_id or torrent_id in seen_torrent_ids:
+            continue
+        seen_torrent_ids.add(torrent_id)
+        if torrent_id in queued_torrent_ids or torrent_id in results_by_torrent:
+            continue
+        entry = source_results.get(torrent_id)
+        if not isinstance(entry, dict):
+            continue
+        queued_torrent_ids.add(torrent_id)
+        selected_entries.append(entry)
+
+    batch["updated_at"] = time.time()
+    if selected_entries:
+        batch["completed"] = False
+    return sorted(selected_entries, key=lambda item: int(item.get("index", 0)))
+
+
 async def run_hardcover_enrichment_batch(search_id: str, results: list[dict]):
+    batch = hardcover_enrichment_batches.get(search_id)
+    if batch is None:
+        return
+
     client = create_hardcover_client()
     if client is None:
+        queued_torrent_ids = batch.get("queued_torrent_ids")
+        if isinstance(queued_torrent_ids, set):
+            for result in results:
+                queued_torrent_ids.discard(str(result.get("id") or ""))
+        batch["completed"] = not batch.get("queued_torrent_ids")
+        batch["updated_at"] = time.time()
         return
 
     threshold = float(app.config.get("HARDCOVER_MATCH_THRESHOLD", FALLBACK_CONFIG["HARDCOVER_MATCH_THRESHOLD"]))
@@ -4012,6 +4067,7 @@ async def run_hardcover_enrichment_batch(search_id: str, results: list[dict]):
         ),
     )
     runner = HardcoverBatchRunner(resolver, concurrency)
+    shared_enrichments = batch.setdefault("shared_enrichments", {})
 
     async def publish(index: int, result: dict, enrichment: dict):
         torrent_id = str(result.get("id") or "")
@@ -4029,10 +4085,10 @@ async def run_hardcover_enrichment_batch(search_id: str, results: list[dict]):
 
     started = time.monotonic()
     try:
-        await runner.run(results, publish)
+        await runner.run(results, publish, shared_cache=shared_enrichments)
         batch = hardcover_enrichment_batches.get(search_id)
         if batch is not None:
-            batch["completed"] = True
+            batch["completed"] = not batch.get("queued_torrent_ids")
             batch["updated_at"] = time.time()
         app.logger.info(
             f"[HARDCOVER] search_id={search_id} enriched={len(results)} "
@@ -4041,7 +4097,11 @@ async def run_hardcover_enrichment_batch(search_id: str, results: list[dict]):
     except Exception as e:
         batch = hardcover_enrichment_batches.get(search_id)
         if batch is not None:
-            batch["completed"] = True
+            queued_torrent_ids = batch.get("queued_torrent_ids")
+            if isinstance(queued_torrent_ids, set):
+                for result in results:
+                    queued_torrent_ids.discard(str(result.get("id") or ""))
+            batch["completed"] = not batch.get("queued_torrent_ids")
             batch["updated_at"] = time.time()
             batch["error"] = str(e)
         app.logger.error(f"[HARDCOVER] Batch failed search_id={search_id}: {e}", exc_info=True)
@@ -4069,6 +4129,44 @@ async def hardcover_enrichment_status(search_id):
         "total": int(batch.get("total") or 0),
         "results": results,
         "error": batch.get("error", ""),
+    })
+
+
+@app.route('/hardcover/enrichment/<search_id>/queue', methods=['POST'])
+async def hardcover_enrichment_queue(search_id):
+    prune_hardcover_enrichment_batches()
+    normalized_search_id = str(search_id or "")
+    batch = hardcover_enrichment_batches.get(normalized_search_id)
+    if not batch:
+        return jsonify({
+            "status": "error",
+            "message": "Hardcover enrichment batch not found.",
+            "search_id": normalized_search_id,
+        }), 404
+
+    data = await request.get_json(silent=True) or {}
+    torrent_ids = data.get("torrent_ids") or []
+    if not isinstance(torrent_ids, list):
+        return jsonify({
+            "status": "error",
+            "message": "torrent_ids must be an array.",
+            "search_id": normalized_search_id,
+        }), 400
+
+    queued_entries = queue_hardcover_enrichment_results(normalized_search_id, torrent_ids)
+    queued_results = [copy.deepcopy(entry.get("result") or {}) for entry in queued_entries if isinstance(entry.get("result"), dict)]
+    if queued_results:
+        app.add_background_task(
+            run_hardcover_enrichment_batch,
+            normalized_search_id,
+            queued_results,
+        )
+
+    return jsonify({
+        "status": "success",
+        "search_id": normalized_search_id,
+        "queued": len(queued_results),
+        "completed": bool(batch.get("completed")),
     })
 
 
@@ -4153,6 +4251,37 @@ async def hardcover_series_details(series_id):
         if cached_payload is not None:
             return jsonify(cached_payload)
         return jsonify({"series": [], "error": str(exc)}), 500
+
+
+@app.route('/hardcover/user-book/<int:book_id>', methods=['GET'])
+async def hardcover_get_user_book(book_id):
+    client = create_hardcover_client()
+    if client is None:
+        return jsonify({
+            "status": "error",
+            "message": "Hardcover integration is not configured.",
+        }), 503
+
+    if int(book_id) <= 0:
+        return jsonify({
+            "status": "error",
+            "message": "A valid Hardcover book_id is required.",
+        }), 400
+
+    try:
+        user_book = await client.user_book_for_book(book_id)
+    except Exception as exc:
+        app.logger.error(f"[HARDCOVER] User book lookup failed book_id={book_id}: {exc}", exc_info=True)
+        return jsonify({
+            "status": "error",
+            "message": f"Hardcover status lookup failed: {exc}",
+        }), 502
+
+    return jsonify({
+        "status": "success",
+        "book_id": int(book_id),
+        "user_book": serialize_hardcover_user_book(user_book),
+    })
 
 
 @app.route('/hardcover/user-book/status', methods=['POST'])
@@ -4531,12 +4660,7 @@ async def mam_search():
                 ),
             )
             if display_results and hardcover_enrichment_is_active():
-                initialize_hardcover_enrichment_batch(search_id, len(display_results))
-                app.add_background_task(
-                    run_hardcover_enrichment_batch,
-                    search_id,
-                    copy.deepcopy(display_results),
-                )
+                initialize_hardcover_enrichment_batch(search_id, copy.deepcopy(display_results))
             return rendered_results
     except Exception as e:
         error_message = format_mam_search_error(e)
