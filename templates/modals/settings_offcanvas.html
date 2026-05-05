@@ -194,11 +194,15 @@
                     Mousehole handles MAM IP updates on its own. Mousehole and MouseSearch must share the same public
                     IP address, such as the same server or VPN connection.
                   </div>
-                  <div id="mousehole-ip-warning" class="alert alert-danger small mt-3 mb-0 d-none"
+                  <div id="mousehole-ip-warning" class="alert small mt-3 mb-0 d-none"
                     data-mousehole-ip="{{ MOUSEHOLE_LAST_HOST_IP }}">
-                    <strong>IP mismatch:</strong> Mousehole reports <span id="mousehole-reported-ip"
-                      class="font-monospace"></span>, but MouseSearch reports <span id="mousesearch-reported-ip"
-                      class="font-monospace"></span>. Mousehole and MouseSearch must share the same public IP address.
+                    <div class="fw-semibold mb-1">IP addresses: <span id="mousehole-ip-status-label">Checking</span></div>
+                    <div class="d-flex flex-column gap-1">
+                      <div>Mousehole IP: <span id="mousehole-reported-ip" class="font-monospace"></span></div>
+                      <div>Direct Server IP: <span id="mousesearch-reported-ip" class="font-monospace"></span></div>
+                      <div>Proxy IP: <span id="mousesearch-proxy-ip" class="font-monospace"></span></div>
+                      <div id="mousehole-ip-status-message" class="small"></div>
+                    </div>
                   </div>
                   <div class="mt-3">
                     <div class="input-group">
@@ -237,7 +241,7 @@
                 <div
                   class="mt-4 p-2 bg-body-secondary rounded border d-flex justify-content-between align-items-center">
                   <div class="small">
-                    Your Server IP: <strong
+                    Direct Server IP: <strong
                       class="backend-ip-display font-monospace text-body-emphasis">Loading...</strong>
                   </div>
                   <button type="button" class="btn btn-sm btn-link p-0 text-decoration-none copy-ip-btn"
@@ -245,6 +249,40 @@
                     <i class="bi bi-clipboard"></i>
                   </button>
                 </div>
+              </div>
+            </div>
+            <div class="card mb-3 border-secondary-subtle toggle-card">
+              <div
+                class="card-header border-bottom-0 bg-transparent d-flex justify-content-between align-items-center py-2 cursor-pointer noselect"
+                onclick="toggleCardSwitch('MAM_PROXY_ENABLED')">
+                <span class="small fw-bold d-flex align-items-center">
+                  <i class="bi bi-shuffle me-2"></i> MAM Proxy
+                </span>
+                <div class="form-check form-switch m-0">
+                  <input class="form-check-input" type="checkbox" id="MAM_PROXY_ENABLED" name="MAM_PROXY_ENABLED" {% if
+                    MAM_PROXY_ENABLED %}checked{% endif %} data-collapse-target="#collapse-mam-proxy">
+                </div>
+              </div>
+              <div id="collapse-mam-proxy" class="collapse {% if MAM_PROXY_ENABLED %}show{% endif %}">
+                <div class="card-body border-top pt-2 pb-2">
+                <div class="form-floating mb-2">
+                  <input type="text" class="form-control font-monospace" id="MAM_PROXY_URL" name="MAM_PROXY_URL"
+                    value="{{ MAM_PROXY_URL }}" placeholder="http://gluetun:8888">
+                  <label for="MAM_PROXY_URL">Proxy URL</label>
+                </div>
+                <div class="form-text small mb-3">
+                  Supports <code>http://</code>, <code>https://</code>, <code>socks5://</code>, and
+                  <code>socks5h://</code>. Include proxy auth inline, for example
+                  <code>http://user:pass@gluetun:8888</code>.
+                </div>
+                <div id="mam-proxy-status-alert" class="alert alert-secondary small mb-0" role="status">
+                  <div class="fw-semibold mb-1">Route status: <span id="mam-proxy-route-status">Direct</span></div>
+                  <div id="mam-proxy-status-message">No MAM proxy configured. MAM requests are going direct.</div>
+                  <div id="mam-proxy-last-error-row" class="mt-2 d-none">Last proxy error:
+                    <span id="mam-proxy-last-error" class="font-monospace"></span>
+                  </div>
+                </div>
+              </div>
               </div>
             </div>
           </div>

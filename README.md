@@ -10,6 +10,7 @@ MouseSearch is a self-hosted web application that provides a clean, fast search 
 ## Key Features
 
 * **MAM Search:** Full-text search for torrents on MyAnonamouse.
+* **MAM-Only Proxy Routing:** Route MyAnonamouse requests through an HTTP/HTTPS/SOCKS proxy while keeping the MouseSearch UI on its normal network path.
 * **Advanced Filtering:** Filter by title, author, narrator, media type, language, and advanced tracker filters (e.g., Freeleech, VIP, Active).
 * **Customizable Search Results:** Toggle specific columns (Series, Narrator, File Type, Seeders, etc.) to tailor the results view to your needs.
 * **One-Click Downloading:** Send torrents directly to your torrent client (supports qBittorrent, Deluge, Transmission, and rTorrent), assigning a category from the UI.
@@ -146,6 +147,10 @@ Open the `.env` file and configure the following settings.
 | `MAM_ID` | **Yes, unless using Mousehole** | Your `mam_id` cookie value from [MyAnonamouse](https://www.myanonamouse.net/preferences/index.php?view=security). |
 | `USE_MOUSEHOLE_MAM_COOKIE` | No | Set to `true` to read the MAM cookie from a running Mousehole service instead of configuring `MAM_ID` in MouseSearch. Defaults to `false`. |
 | `MOUSEHOLE_API_URL` | If `USE_MOUSEHOLE_MAM_COOKIE` is `true` | Base URL for Mousehole's API, such as `http://localhost:5010` or `http://mousehole:5010`. Defaults to `http://localhost:5010`. |
+| `MAM_PROXY_ENABLED` | No | Enables the MAM-specific proxy feature. Defaults to `false`. |
+| `MAM_PROXY_URL` | No | Optional outbound proxy used for MAM requests, such as `http://gluetun:8888`, `http://user:pass@proxy:8080`, or `socks5h://user:pass@proxy:1080`. |
+| `MAM_PROXY_ONLY` | No | Keeps the proxy scoped to MAM traffic when `true`. Defaults to `true`. |
+| `MAM_PROXY_FALLBACK_DIRECT` | No | If the configured MAM proxy is unavailable, fall back to a direct connection when `true`. Defaults to `true`. |
 
 ### Torrent Client Configuration
 

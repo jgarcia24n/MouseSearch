@@ -20,3 +20,8 @@ services:
       # Change these to match your host user (run 'id' in terminal to check)
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+      # Optional: route MAM traffic through a proxy such as Gluetun's built-in HTTP proxy.
+      # - MAM_PROXY_ENABLED=true
+      # - MAM_PROXY_URL=http://gluetun:8888
+      # - MAM_PROXY_ONLY=true
+      # - MAM_PROXY_FALLBACK_DIRECT=true

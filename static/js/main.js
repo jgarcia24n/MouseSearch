@@ -2390,6 +2390,7 @@ function loadMamUserData() {
     fetch('/mam/user_data', { cache: "no-store" })
         .then(async response => {
             const data = await response.json().catch(() => ({}));
+            updateMamProxyStatusPanel(data?.proxy_status);
             if (!response.ok) {
                 throw new Error(data?.message || data?.error || `MAM request failed with HTTP ${response.status}`);
             }
@@ -2524,23 +2525,44 @@ function normalizeIpForCompare(value) {
 
 let lastMouseholeIpMismatchToastKey = '';
 
+function currentMamProxyRoute() {
+    return String(window.mamProxyStatus?.route || 'direct');
+}
+
+function mouseSearchEffectiveIpForCompare() {
+    const route = currentMamProxyRoute();
+    if (route === 'proxy') {
+        return normalizeIpForCompare(window.mousesearchProxyIp);
+    }
+    if (route === 'direct_fallback' || route === 'direct') {
+        return normalizeIpForCompare(window.mousesearchPublicIp);
+    }
+    return '';
+}
+
 function currentMouseholeIpMismatch() {
     const warning = document.getElementById('mousehole-ip-warning');
     if (!warning) return null;
 
     const mouseholeEnabled = document.getElementById('USE_MOUSEHOLE_MAM_COOKIE')?.checked;
     const mouseholeIp = normalizeIpForCompare(warning.dataset.mouseholeIp);
-    const mousesearchIp = normalizeIpForCompare(window.mousesearchPublicIp);
-    const shouldWarn = Boolean(mouseholeEnabled && mouseholeIp && mousesearchIp && mouseholeIp !== mousesearchIp);
+    const directIp = normalizeIpForCompare(window.mousesearchPublicIp);
+    const proxyIp = normalizeIpForCompare(window.mousesearchProxyIp);
+    const effectiveIp = mouseSearchEffectiveIpForCompare();
+    const route = currentMamProxyRoute();
+    const proxyError = route === 'error' || route === 'configured';
+    const hasComparableIps = Boolean(mouseholeEnabled && mouseholeIp && effectiveIp && !proxyError);
+    const shouldWarn = Boolean(hasComparableIps && mouseholeIp !== effectiveIp);
+    const isHealthy = Boolean(hasComparableIps && mouseholeIp === effectiveIp);
 
-    return { warning, mouseholeIp, mousesearchIp, shouldWarn };
+    return { warning, mouseholeIp, directIp, proxyIp, effectiveIp, route, shouldWarn, isHealthy, proxyError, mouseholeEnabled };
 }
 
 function showMouseholeIpMismatchToast(force = false) {
     const mismatch = currentMouseholeIpMismatch();
     if (!mismatch?.shouldWarn) return;
 
-    const mismatchKey = `${mismatch.mouseholeIp}|${mismatch.mousesearchIp}`;
+    const mismatchKey = `${mismatch.mouseholeIp}|${mismatch.effectiveIp}|${mismatch.route}`;
     if (force || lastMouseholeIpMismatchToastKey !== mismatchKey) {
         lastMouseholeIpMismatchToastKey = mismatchKey;
         showToast('Mousehole and MouseSearch do not share the same public IP address. MouseSearch may not function.', 'danger');
@@ -2551,15 +2573,64 @@ function updateMouseholeIpWarning(showToastOnMismatch = true) {
     const mismatch = currentMouseholeIpMismatch();
     if (!mismatch) return;
 
-    const { warning, mouseholeIp, mousesearchIp, shouldWarn } = mismatch;
+    const {
+        warning, mouseholeIp, directIp, proxyIp, effectiveIp, route, shouldWarn, isHealthy, proxyError, mouseholeEnabled,
+    } = mismatch;
+    const statusLabel = document.getElementById('mousehole-ip-status-label');
+    const statusMessage = document.getElementById('mousehole-ip-status-message');
+    const mouseholeReportedIp = document.getElementById('mousehole-reported-ip');
+    const mousesearchReportedIp = document.getElementById('mousesearch-reported-ip');
+    const mousesearchProxyIp = document.getElementById('mousesearch-proxy-ip');
 
-    document.getElementById('mousehole-reported-ip').textContent = mouseholeIp;
-    document.getElementById('mousesearch-reported-ip').textContent = mousesearchIp;
-    warning.classList.toggle('d-none', !shouldWarn);
+    if (mouseholeReportedIp) mouseholeReportedIp.textContent = mouseholeIp || 'Unavailable';
+    if (mousesearchReportedIp) mousesearchReportedIp.textContent = directIp || 'Unavailable';
+    if (mousesearchProxyIp) mousesearchProxyIp.textContent = proxyIp || 'Unavailable';
+
+    warning.className = 'alert small mt-3 mb-0';
+
+    if (!mouseholeEnabled || !mouseholeIp) {
+        warning.classList.add('d-none');
+        lastMouseholeIpMismatchToastKey = '';
+        return;
+    }
+
+    warning.classList.remove('d-none');
+
+    if (proxyError) {
+        warning.classList.add('alert-warning');
+        if (statusLabel) statusLabel.textContent = 'Unavailable';
+        if (statusMessage) {
+            statusMessage.textContent = 'MAM proxy is configured but unavailable. IP matching cannot be verified right now.';
+        }
+    } else if (isHealthy) {
+        warning.classList.add('alert-success');
+        if (statusLabel) statusLabel.textContent = 'Healthy';
+        if (statusMessage) {
+            statusMessage.textContent = route === 'proxy'
+                ? 'Mousehole IP matches Proxy IP.'
+                : 'Mousehole IP matches Direct Server IP.';
+        }
+        lastMouseholeIpMismatchToastKey = '';
+    } else if (shouldWarn) {
+        warning.classList.add('alert-danger');
+        if (statusLabel) statusLabel.textContent = 'Mismatch';
+        if (statusMessage) {
+            statusMessage.textContent = route === 'proxy'
+                ? `Mousehole IP does not match Proxy IP (${effectiveIp || 'Unavailable'}).`
+                : `Mousehole IP does not match Direct Server IP (${effectiveIp || 'Unavailable'}).`;
+        }
+    } else {
+        warning.classList.add('alert-secondary');
+        if (statusLabel) statusLabel.textContent = 'Checking';
+        if (statusMessage) {
+            statusMessage.textContent = 'Waiting for IP data.';
+        }
+        lastMouseholeIpMismatchToastKey = '';
+    }
 
     if (showToastOnMismatch && shouldWarn) {
         showMouseholeIpMismatchToast();
-    } else {
+    } else if (!shouldWarn) {
         lastMouseholeIpMismatchToastKey = '';
     }
 }
@@ -2571,31 +2642,88 @@ function setMouseholeReportedIp(ip, showToastOnMismatch = true) {
     updateMouseholeIpWarning(showToastOnMismatch);
 }
 
+function updateMamProxyStatusPanel(proxyStatus) {
+    const alert = document.getElementById('mam-proxy-status-alert');
+    if (!alert) return;
+
+    const routeLabel = document.getElementById('mam-proxy-route-status');
+    const message = document.getElementById('mam-proxy-status-message');
+    const lastErrorRow = document.getElementById('mam-proxy-last-error-row');
+    const lastError = document.getElementById('mam-proxy-last-error');
+
+    const data = proxyStatus || {};
+    window.mamProxyStatus = data;
+    const route = String(data.route || 'direct');
+    const statusLevel = String(data.status_level || 'secondary');
+    const enabled = data.enabled !== false;
+    const routeLabels = {
+        proxy: 'Proxy',
+        direct_fallback: 'Direct Fallback',
+        direct: 'Direct',
+        error: 'Error',
+        configured: 'Configured',
+    };
+
+    alert.className = 'alert small mb-0';
+    alert.classList.add(`alert-${statusLevel}`);
+
+    if (routeLabel) routeLabel.textContent = routeLabels[route] || route;
+    if (message) message.textContent = String(data.message || 'No MAM proxy configured. MAM requests are going direct.');
+    if (!enabled && routeLabel) routeLabel.textContent = 'Disabled';
+
+    const errorText = String(data.last_error || '').trim();
+    if (lastErrorRow && lastError) {
+        lastError.textContent = errorText;
+        lastErrorRow.classList.toggle('d-none', !errorText);
+    }
+
+    updateMouseholeIpWarning(false);
+}
+
 async function fetchPublicIP() {
-    fetch('/system/public_ip')
-        .then(r => r.json())
-        .then(data => {
-            if (data.ip) {
-                window.mousesearchPublicIp = data.ip;
-                document.querySelectorAll('.backend-ip-display').forEach(el => el.textContent = data.ip);
+    Promise.allSettled([
+        fetch('/system/public_ip?route=direct').then(r => r.json()),
+        fetch('/system/public_ip?route=mam').then(r => r.json()),
+    ])
+        .then(([directResult, proxyResult]) => {
+            const directData = directResult.status === 'fulfilled' ? directResult.value : null;
+            const proxyData = proxyResult.status === 'fulfilled' ? proxyResult.value : null;
+
+            if (directData?.ip) {
+                window.mousesearchPublicIp = directData.ip;
+                document.querySelectorAll('.backend-ip-display').forEach(el => el.textContent = directData.ip);
                 document.querySelectorAll('.backend-ip-display-badge').forEach(el => el.style.display = 'inline-block');
                 document.querySelectorAll('.copy-ip-btn').forEach(btn => {
                     if (navigator.clipboard) {
-                        btn.onclick = (e) => {
-                            copyTextWithFeedback(btn, data.ip);
+                        btn.onclick = () => {
+                            copyTextWithFeedback(btn, directData.ip);
                         };
                     } else {
                         btn.style.display = 'none';
                     }
                 });
-                updateMouseholeIpWarning();
             } else {
-                document.querySelectorAll('.backend-ip-display').forEach(el => el.textContent = "Error");
+                document.querySelectorAll('.backend-ip-display').forEach(el => el.textContent = "Unavailable");
             }
+
+            if (proxyData?.ip && String(proxyData?.proxy_status?.route || '') === 'proxy') {
+                window.mousesearchProxyIp = proxyData.ip;
+            } else {
+                window.mousesearchProxyIp = '';
+            }
+
+            if (proxyData?.proxy_status) {
+                updateMamProxyStatusPanel(proxyData.proxy_status);
+            } else {
+                updateMouseholeIpWarning(false);
+            }
+            updateMouseholeIpWarning();
         })
         .catch(err => {
             console.error("Failed to fetch IP", err);
             document.querySelectorAll('.backend-ip-display').forEach(el => el.textContent = "Unavailable");
+            window.mousesearchProxyIp = '';
+            updateMouseholeIpWarning(false);
         });
 }
 
@@ -2898,6 +3026,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
         const config = [
             { trigger: 'USE_MOUSEHOLE_MAM_COOKIE', target: 'MOUSEHOLE_API_URL' },
+            { trigger: 'MAM_PROXY_ENABLED', target: 'MAM_PROXY_URL' },
             { trigger: 'ENABLE_DYNAMIC_IP_UPDATE', target: 'DYNAMIC_IP_UPDATE_INTERVAL_HOURS' },
             { trigger: 'HARDCOVER_ENRICHMENT_ENABLED', target: 'HARDCOVER_API_TOKEN' },
             { trigger: 'AUTO_BUY_VIP', target: 'AUTO_BUY_VIP_INTERVAL_HOURS' },
@@ -3263,6 +3392,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                     const mouseholeCookieEl = document.getElementById('mousehole-last-cookie');
                     if (mouseholeCookieEl && data.mousehole_cookie) mouseholeCookieEl.value = data.mousehole_cookie;
                     if (Object.prototype.hasOwnProperty.call(data, 'mousehole_ip')) setMouseholeReportedIp(data.mousehole_ip);
+                    updateMamProxyStatusPanel(data.proxy_status);
                     updateCopyFieldButtons();
                     const catDropdown = document.getElementById('TORRENT_CLIENT_CATEGORY');
                     if (catDropdown) catDropdown.dataset.currentValue = catDropdown.value;
