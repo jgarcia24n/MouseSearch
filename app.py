@@ -1178,6 +1178,84 @@ async def request_mam(method: str, url: str, **kwargs) -> httpx.Response:
     return await request_with_optional_proxy(method, url, track_proxy_status=True, **kwargs)
 
 
+async def send_mam_stream(
+    method: str,
+    url: str,
+    *,
+    track_proxy_status: bool = True,
+    follow_redirects: bool = False,
+    **kwargs,
+) -> httpx.Response:
+    proxy_url = current_mam_proxy_url()
+    fallback_direct = coerce_bool(
+        app.config.get("MAM_PROXY_FALLBACK_DIRECT"),
+        FALLBACK_CONFIG["MAM_PROXY_FALLBACK_DIRECT"],
+    )
+    should_use_proxy = bool(proxy_url)
+
+    async def perform_direct_send() -> httpx.Response:
+        if UPSTREAM_CLIENT is None:
+            raise RuntimeError("Shared upstream client is not initialized.")
+        req = UPSTREAM_CLIENT.build_request(method, url, **kwargs)
+        return await UPSTREAM_CLIENT.send(req, stream=True, follow_redirects=follow_redirects)
+
+    if not should_use_proxy:
+        response = await perform_direct_send()
+        if track_proxy_status:
+            update_mam_proxy_route_state(
+                "direct",
+                "No MAM proxy configured. MAM requests are going direct.",
+            )
+        return response
+
+    proxy_error: Exception | None = None
+    proxy_response: httpx.Response | None = None
+
+    if MAM_PROXY_CLIENT is None:
+        proxy_error = RuntimeError("Configured proxy client is not available.")
+    else:
+        try:
+            req = MAM_PROXY_CLIENT.build_request(method, url, **kwargs)
+            proxy_response = await MAM_PROXY_CLIENT.send(req, stream=True, follow_redirects=follow_redirects)
+            if proxy_response.status_code in MAM_PROXY_FALLBACK_STATUS_CODES:
+                status_code = int(proxy_response.status_code)
+                await proxy_response.aclose()
+                proxy_response = None
+                proxy_error = RuntimeError(f"Proxy request returned HTTP {status_code}.")
+            else:
+                if track_proxy_status:
+                    update_mam_proxy_route_state(
+                        "proxy",
+                        "MAM requests are using the configured proxy.",
+                    )
+                return proxy_response
+        except httpx.RequestError as exc:
+            proxy_error = exc
+        except Exception as exc:
+            proxy_error = exc
+
+    error_text = str(proxy_error or "Unknown proxy error")
+    if fallback_direct:
+        response = await perform_direct_send()
+        if track_proxy_status:
+            update_mam_proxy_route_state(
+                "direct_fallback",
+                "Proxy is configured for MyAnonamouse traffic, but it is not reachable. "
+                "Requests are currently falling back to direct connection.",
+                last_error=error_text,
+            )
+        app.logger.warning("[MAM-PROXY] Proxy streaming request failed; falling back direct: %s", error_text)
+        return response
+
+    if track_proxy_status:
+        update_mam_proxy_route_state(
+            "error",
+            "Proxy is configured for MyAnonamouse traffic, but it is not reachable. Direct fallback is disabled.",
+            last_error=error_text,
+        )
+    raise proxy_error or RuntimeError("Proxy request failed.")
+
+
 def apply_legacy_config_aliases(target: dict, source):
     for canonical_key, aliases in LEGACY_CONFIG_ALIASES.items():
         canonical_value = source.get(canonical_key)
@@ -5215,10 +5293,15 @@ async def proxy_thumbnail():
         current_url = url
         
         while redirect_count < 3:
-            req = UPSTREAM_CLIENT.build_request("GET", current_url, headers=fwd_headers, cookies=mam_session_cookies)
-            
             # Disable auto-follow so we can inspect the headers ourselves
-            r = await UPSTREAM_CLIENT.send(req, stream=True, follow_redirects=False)
+            r = await send_mam_stream(
+                "GET",
+                current_url,
+                headers=fwd_headers,
+                cookies=mam_session_cookies,
+                follow_redirects=False,
+            )
+            update_cookies(r)
             
             if r.status_code in (301, 302, 303, 307, 308):
                 await r.aclose() # Close the stream for the redirect response
