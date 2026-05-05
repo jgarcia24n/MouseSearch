@@ -49,6 +49,7 @@ from hardcover.resolver import HardcoverBatchRunner, HardcoverEnrichmentConfig, 
 app = Quart(__name__)
 
 UPSTREAM_CLIENT: httpx.AsyncClient | None = None
+MAM_PROXY_CLIENT: httpx.AsyncClient | None = None
 HARDCOVER_CLIENT: HardcoverClient | None = None
 HARDCOVER_USER_BOOK_PRELOAD_ACTIVE = False
 
@@ -60,6 +61,12 @@ mousehole_cookie_last_error = None
 mousehole_last_mam_cookie = ""
 mousehole_last_host_ip = ""
 MOUSEHOLE_COOKIE_REFRESH_SECONDS = 30.0
+MAM_PROXY_FALLBACK_STATUS_CODES = {407, 502, 503, 504}
+mam_proxy_route_state = {
+    "route": "direct",
+    "message": "No MAM proxy configured. MAM requests are going direct.",
+    "last_error": "",
+}
 
 # --- Monitoring & Caching Globals ---
 monitoring_state = {} 
@@ -730,10 +737,8 @@ async def startup():
         app.logger.debug("AsyncIOScheduler started")
 
     global UPSTREAM_CLIENT
-    transport = AsyncHTTPTransport(http2=True, retries=2)
-    limits = Limits(max_connections=200, max_keepalive_connections=50, keepalive_expiry=120.0)
-    timeout = Timeout(connect=5.0, read=15.0, write=15.0, pool=None)
-    UPSTREAM_CLIENT = httpx.AsyncClient(transport=transport, limits=limits, timeout=timeout)
+    UPSTREAM_CLIENT = build_shared_async_client()
+    await rebuild_mam_proxy_client()
     app.logger.debug("Shared httpx AsyncClient initialized")
     
     # --- Initialize Active Monitoring on Startup ---
@@ -765,6 +770,12 @@ async def shutdown():
         await UPSTREAM_CLIENT.aclose()
         UPSTREAM_CLIENT = None
         app.logger.info("Shared httpx AsyncClient closed")
+
+    global MAM_PROXY_CLIENT
+    if MAM_PROXY_CLIENT is not None:
+        await MAM_PROXY_CLIENT.aclose()
+        MAM_PROXY_CLIENT = None
+        app.logger.info("Shared MAM proxy AsyncClient closed")
 
     await close_autosuggest_cache_db()
     
@@ -949,6 +960,10 @@ FALLBACK_CONFIG = {
     "MAM_ID": "",
     "USE_MOUSEHOLE_MAM_COOKIE": False,
     "MOUSEHOLE_API_URL": "http://localhost:5010",
+    "MAM_PROXY_ENABLED": False,
+    "MAM_PROXY_URL": "",
+    "MAM_PROXY_ONLY": True,
+    "MAM_PROXY_FALLBACK_DIRECT": True,
     "DATA_PATH": "./data",
     "ORGANIZED_PATH": "/downloads/organized",
     "DESTINATION_PATHS": [
@@ -1024,6 +1039,143 @@ THUMB_CACHE_DIR = DATA_PATH / "cache/thumbnails"
 ORGANIZED_PATH = None
 LOCAL_TORRENT_DOWNLOAD_PATH = None
 REMOTE_TORRENT_DOWNLOAD_PATH = None
+
+
+def build_shared_async_client(*, proxy: str | None = None, timeout: Timeout | None = None) -> httpx.AsyncClient:
+    transport = AsyncHTTPTransport(http2=True, retries=2)
+    limits = Limits(max_connections=200, max_keepalive_connections=50, keepalive_expiry=120.0)
+    resolved_timeout = timeout or Timeout(connect=5.0, read=15.0, write=15.0, pool=None)
+    client_kwargs = {
+        "transport": transport,
+        "limits": limits,
+        "timeout": resolved_timeout,
+        "follow_redirects": True,
+    }
+    if proxy:
+        client_kwargs["proxy"] = proxy
+    return httpx.AsyncClient(**client_kwargs)
+
+
+async def rebuild_mam_proxy_client():
+    global MAM_PROXY_CLIENT
+
+    if MAM_PROXY_CLIENT is not None:
+        await MAM_PROXY_CLIENT.aclose()
+        MAM_PROXY_CLIENT = None
+
+    proxy_url = current_mam_proxy_url()
+    if not proxy_url:
+        reset_mam_proxy_route_state()
+        return
+
+    try:
+        MAM_PROXY_CLIENT = build_shared_async_client(proxy=proxy_url)
+        reset_mam_proxy_route_state()
+        if proxy_url.lower().startswith("socks5://"):
+            app.logger.warning(
+                "[MAM-PROXY] Proxy URL uses socks5://. Prefer socks5h:// for remote DNS resolution."
+            )
+    except Exception as exc:
+        MAM_PROXY_CLIENT = None
+        update_mam_proxy_route_state(
+            "error",
+            "Proxy is configured for MyAnonamouse traffic, but the proxy client could not be initialized.",
+            last_error=str(exc),
+        )
+        app.logger.error("[MAM-PROXY] Failed to initialize proxy client: %s", exc)
+
+
+async def request_with_optional_proxy(
+    method: str,
+    url: str,
+    *,
+    track_proxy_status: bool = False,
+    force_proxy: bool = False,
+    force_direct: bool = False,
+    **kwargs,
+) -> httpx.Response:
+    proxy_url = current_mam_proxy_url()
+    proxy_only = coerce_bool(app.config.get("MAM_PROXY_ONLY"), FALLBACK_CONFIG["MAM_PROXY_ONLY"])
+    fallback_direct = coerce_bool(
+        app.config.get("MAM_PROXY_FALLBACK_DIRECT"),
+        FALLBACK_CONFIG["MAM_PROXY_FALLBACK_DIRECT"],
+    )
+    should_use_proxy = (not force_direct) and bool(proxy_url) and (force_proxy or track_proxy_status or not proxy_only)
+
+    async def perform_direct_request() -> httpx.Response:
+        if UPSTREAM_CLIENT is not None:
+            return await UPSTREAM_CLIENT.request(method, url, **kwargs)
+        async with build_shared_async_client() as client:
+            return await client.request(method, url, **kwargs)
+
+    if not should_use_proxy:
+        response = await perform_direct_request()
+        if track_proxy_status:
+            update_mam_proxy_route_state(
+                "direct",
+                "No MAM proxy configured. MAM requests are going direct.",
+            )
+        return response
+
+    proxy_error: Exception | None = None
+    proxy_response: httpx.Response | None = None
+
+    if MAM_PROXY_CLIENT is None:
+        proxy_error = RuntimeError("Configured proxy client is not available.")
+    else:
+        try:
+            proxy_response = await MAM_PROXY_CLIENT.request(method, url, **kwargs)
+            if proxy_response.status_code in MAM_PROXY_FALLBACK_STATUS_CODES:
+                status_code = int(proxy_response.status_code)
+                await proxy_response.aclose()
+                proxy_response = None
+                proxy_error = RuntimeError(f"Proxy request returned HTTP {status_code}.")
+            else:
+                if track_proxy_status:
+                    update_mam_proxy_route_state(
+                        "proxy",
+                        "MAM requests are using the configured proxy.",
+                    )
+                return proxy_response
+        except httpx.RequestError as exc:
+            proxy_error = exc
+        except Exception as exc:
+            proxy_error = exc
+
+    error_text = str(proxy_error or "Unknown proxy error")
+    if fallback_direct:
+        try:
+            response = await perform_direct_request()
+            if track_proxy_status:
+                update_mam_proxy_route_state(
+                    "direct_fallback",
+                    "Proxy is configured for MyAnonamouse traffic, but it is not reachable. "
+                    "Requests are currently falling back to direct connection.",
+                    last_error=error_text,
+                )
+            app.logger.warning("[MAM-PROXY] Proxy request failed; falling back direct: %s", error_text)
+            return response
+        except Exception as direct_exc:
+            combined_error = f"{error_text} Direct fallback also failed: {direct_exc}"
+            if track_proxy_status:
+                update_mam_proxy_route_state(
+                    "error",
+                    "Proxy is configured for MyAnonamouse traffic, but it is not reachable and direct fallback also failed.",
+                    last_error=combined_error,
+                )
+            raise direct_exc
+
+    if track_proxy_status:
+        update_mam_proxy_route_state(
+            "error",
+            "Proxy is configured for MyAnonamouse traffic, but it is not reachable. Direct fallback is disabled.",
+            last_error=error_text,
+        )
+    raise proxy_error or RuntimeError("Proxy request failed.")
+
+
+async def request_mam(method: str, url: str, **kwargs) -> httpx.Response:
+    return await request_with_optional_proxy(method, url, track_proxy_status=True, **kwargs)
 
 
 def apply_legacy_config_aliases(target: dict, source):
@@ -1137,6 +1289,134 @@ def normalize_mam_cookie_value(value) -> str:
     return raw
 
 
+def normalize_proxy_url(value) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if "://" not in raw:
+        raw = f"http://{raw}"
+    return raw
+
+
+def sanitize_proxy_url(url: str | None) -> str:
+    raw_url = str(url or "").strip()
+    if not raw_url:
+        return ""
+
+    try:
+        parsed = urlparse(raw_url)
+    except ValueError:
+        return "<invalid-proxy-url>"
+
+    hostname = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port else ""
+    if parsed.username or parsed.password:
+        netloc = f"<redacted>@{hostname}{port}" if hostname else "<redacted>"
+    else:
+        netloc = parsed.netloc or hostname
+
+    return parsed._replace(netloc=netloc, query="", fragment="").geturl() or raw_url
+
+
+def current_mam_proxy_url() -> str:
+    if not coerce_bool(app.config.get("MAM_PROXY_ENABLED"), FALLBACK_CONFIG["MAM_PROXY_ENABLED"]):
+        return ""
+    return normalize_proxy_url(app.config.get("MAM_PROXY_URL"))
+
+
+def mam_proxy_is_configured() -> bool:
+    return bool(current_mam_proxy_url())
+
+
+def mam_proxy_is_enabled() -> bool:
+    return coerce_bool(app.config.get("MAM_PROXY_ENABLED"), FALLBACK_CONFIG["MAM_PROXY_ENABLED"])
+
+
+def reset_mam_proxy_route_state():
+    if not mam_proxy_is_enabled():
+        mam_proxy_route_state.update({
+            "route": "direct",
+            "message": "MAM proxy is disabled. MAM requests are going direct.",
+            "last_error": "",
+        })
+    elif mam_proxy_is_configured():
+        mam_proxy_route_state.update({
+            "route": "configured",
+            "message": "Proxy configured. Route status will update after the next MAM request.",
+            "last_error": "",
+        })
+    else:
+        mam_proxy_route_state.update({
+            "route": "direct",
+            "message": "No MAM proxy configured. MAM requests are going direct.",
+            "last_error": "",
+        })
+
+
+def update_mam_proxy_route_state(route: str, message: str, *, last_error: str = ""):
+    mam_proxy_route_state.update({
+        "route": route,
+        "message": str(message or "").strip(),
+        "last_error": str(last_error or "").strip(),
+    })
+
+
+def build_mam_proxy_status_payload() -> dict[str, Any]:
+    enabled = mam_proxy_is_enabled()
+    raw_proxy_url = normalize_proxy_url(app.config.get("MAM_PROXY_URL"))
+    proxy_url = current_mam_proxy_url()
+    proxy_only = coerce_bool(app.config.get("MAM_PROXY_ONLY"), FALLBACK_CONFIG["MAM_PROXY_ONLY"])
+    fallback_direct = coerce_bool(
+        app.config.get("MAM_PROXY_FALLBACK_DIRECT"),
+        FALLBACK_CONFIG["MAM_PROXY_FALLBACK_DIRECT"],
+    )
+    route = str(mam_proxy_route_state.get("route") or "direct")
+    last_error = str(mam_proxy_route_state.get("last_error") or "").strip()
+    message = str(mam_proxy_route_state.get("message") or "").strip()
+
+    if not enabled:
+        route = "direct"
+        level = "secondary"
+        message = "MAM proxy is disabled. MAM requests are going direct."
+    elif not proxy_url:
+        route = "direct"
+        level = "info"
+        message = "MAM proxy is enabled, but no proxy URL is configured. MAM requests are going direct."
+    elif route == "proxy":
+        level = "success"
+        message = message or "MAM requests are using the configured proxy."
+    elif route == "direct_fallback":
+        level = "warning"
+        message = message or (
+            "Proxy is configured for MyAnonamouse traffic, but it is not reachable. "
+            "Requests are currently falling back to direct connection."
+        )
+    elif route == "error":
+        level = "danger"
+        message = message or (
+            "Proxy is configured for MyAnonamouse traffic, but it is not reachable. "
+            "Direct fallback is disabled."
+        )
+    elif route == "configured":
+        level = "secondary"
+        message = message or "Proxy configured. Route status will update after the next MAM request."
+    else:
+        level = "secondary"
+        message = message or "MAM route status is unknown."
+
+    return {
+        "enabled": enabled,
+        "configured": bool(proxy_url),
+        "proxy_url_display": sanitize_proxy_url(raw_proxy_url) or "Not configured",
+        "proxy_only": proxy_only,
+        "fallback_direct": fallback_direct,
+        "route": route,
+        "status_level": level,
+        "message": message,
+        "last_error": last_error,
+    }
+
+
 def load_config():
     # 1. Start with Hardcoded Defaults (Lowest Priority)
     config = copy.deepcopy(FALLBACK_CONFIG)
@@ -1237,6 +1517,9 @@ def load_config():
         "HAPTICS_ENABLED",
         "ENABLE_DYNAMIC_IP_UPDATE",
         "USE_MOUSEHOLE_MAM_COOKIE",
+        "MAM_PROXY_ENABLED",
+        "MAM_PROXY_ONLY",
+        "MAM_PROXY_FALLBACK_DIRECT",
         "AUTO_BUY_VIP",
         "AUTO_BUY_UPLOAD_ON_RATIO",
         "AUTO_BUY_UPLOAD_ON_BUFFER",
@@ -1255,6 +1538,7 @@ def load_config():
             config[key] = str(val).lower() in ('true', '1', 't', 'yes', 'on')
 
     config["MOUSEHOLE_API_URL"] = normalize_mousehole_api_url(config.get("MOUSEHOLE_API_URL"))
+    config["MAM_PROXY_URL"] = normalize_proxy_url(config.get("MAM_PROXY_URL"))
 
     config["RESULTS_DISPLAY_FIELDS"] = normalize_result_display_fields(
         config.get("RESULTS_DISPLAY_FIELDS"),
@@ -1640,6 +1924,7 @@ async def load_new_app_config():
 
     app.secret_key = new_config["QUART_SECRET_KEY"]
     app.config.update(new_config)
+    reset_mam_proxy_route_state()
     
     # Load upload options
     app.config["UPLOAD_OPTIONS"] = load_upload_options()
@@ -1668,6 +1953,8 @@ async def load_new_app_config():
     except Exception as e:
         app.logger.error(f"Failed to initialize torrent client: {e}")
         torrent_client = None
+
+    await rebuild_mam_proxy_client()
 
 # --- ACTIVE MONITORING & CACHING LOGIC ---
 
@@ -1986,30 +2273,29 @@ async def force_update_ip(notify_event=False, previous_ip=None, detected_ip=None
         api_cookies = dict(mam_session_cookies)
         try:
             update_url = "https://t.myanonamouse.net/json/dynamicSeedbox.php"
-            async with httpx.AsyncClient() as client:
-                update_response = await client.get(update_url, cookies=api_cookies, timeout=15)
-                update_response.raise_for_status()
-                update_data = update_response.json()
-                if new_ip := update_data.get("ip"):
-                    save_ip_state(new_ip)
-                    if notify_event:
-                        await send_auto_task_webhook_notification(
-                            "auto_update_ip",
-                            True,
-                            task="dynamic_ip_update",
-                            previous_ip=previous_ip,
-                            detected_ip=detected_ip,
-                            updated_ip=new_ip,
-                        )
-                elif notify_event:
+            update_response = await request_mam("GET", update_url, cookies=api_cookies, timeout=15)
+            update_response.raise_for_status()
+            update_data = update_response.json()
+            if new_ip := update_data.get("ip"):
+                save_ip_state(new_ip)
+                if notify_event:
                     await send_auto_task_webhook_notification(
                         "auto_update_ip",
-                        False,
+                        True,
                         task="dynamic_ip_update",
                         previous_ip=previous_ip,
                         detected_ip=detected_ip,
-                        error="Update endpoint did not return an IP address",
+                        updated_ip=new_ip,
                     )
+            elif notify_event:
+                await send_auto_task_webhook_notification(
+                    "auto_update_ip",
+                    False,
+                    task="dynamic_ip_update",
+                    previous_ip=previous_ip,
+                    detected_ip=detected_ip,
+                    error="Update endpoint did not return an IP address",
+                )
         except Exception as e:
             app.logger.error(f"Error calling dynamic seedbox update: {e}")
             if notify_event:
@@ -2039,11 +2325,11 @@ async def check_and_update_ip():
         api_cookies = dict(mam_session_cookies)
         try:
             ip_check_url = f"{app.config.get('MAM_API_URL')}/json/jsonIp.php"
-            async with httpx.AsyncClient() as client:
-                response = await client.get(ip_check_url, cookies=api_cookies, timeout=10)
-                response.raise_for_status()
-                current_ip = response.json().get("ip")
-                if not current_ip: return
+            response = await request_mam("GET", ip_check_url, cookies=api_cookies, timeout=10)
+            response.raise_for_status()
+            current_ip = response.json().get("ip")
+            if not current_ip:
+                return
         except Exception as e:
             await send_auto_task_webhook_notification(
                 "auto_update_ip",
@@ -2105,42 +2391,41 @@ async def auto_buy_vip():
                 'duration': 'max',
                 '_': epoch_ms
             }
-            
-            async with httpx.AsyncClient() as client:
-                response = await client.get(api_url, params=params, cookies=mam_session_cookies, timeout=10)
-                update_cookies(response)
-                response.raise_for_status()
-                result = response.json()
-                
-                if result.get('success'):
-                    app.logger.info(f"[AUTO-VIP] Purchase successful - {result.get('amount')} weeks added, Remaining bonus: {result.get('seedbonus')}")
-                    await broadcast_payload({
-                        'event': 'vip_purchase',
-                        'success': True,
-                        'amount': result.get('amount'),
-                        'seedbonus': result.get('seedbonus')
-                    })
-                    await send_auto_task_webhook_notification(
-                        "auto_buy_vip",
-                        True,
-                        task="vip_topup",
-                        amount=result.get('amount'),
-                        seedbonus=result.get('seedbonus'),
-                    )
-                else:
-                    app.logger.warning(f"[AUTO-VIP] Purchase failed: {result}")
-                    await send_auto_task_webhook_notification(
-                        "auto_buy_vip",
-                        False,
-                        task="vip_topup",
-                        amount=result.get('amount'),
-                        seedbonus=result.get('seedbonus'),
-                        error=normalize_spaces(
-                            result.get('error')
-                            or result.get('message')
-                            or json.dumps(result, ensure_ascii=True)
-                        ),
-                    )
+
+            response = await request_mam("GET", api_url, params=params, cookies=mam_session_cookies, timeout=10)
+            update_cookies(response)
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get('success'):
+                app.logger.info(f"[AUTO-VIP] Purchase successful - {result.get('amount')} weeks added, Remaining bonus: {result.get('seedbonus')}")
+                await broadcast_payload({
+                    'event': 'vip_purchase',
+                    'success': True,
+                    'amount': result.get('amount'),
+                    'seedbonus': result.get('seedbonus')
+                })
+                await send_auto_task_webhook_notification(
+                    "auto_buy_vip",
+                    True,
+                    task="vip_topup",
+                    amount=result.get('amount'),
+                    seedbonus=result.get('seedbonus'),
+                )
+            else:
+                app.logger.warning(f"[AUTO-VIP] Purchase failed: {result}")
+                await send_auto_task_webhook_notification(
+                    "auto_buy_vip",
+                    False,
+                    task="vip_topup",
+                    amount=result.get('amount'),
+                    seedbonus=result.get('seedbonus'),
+                    error=normalize_spaces(
+                        result.get('error')
+                        or result.get('message')
+                        or json.dumps(result, ensure_ascii=True)
+                    ),
+                )
         except Exception as e:
             app.logger.error(f"[AUTO-VIP] Error during scheduled VIP purchase: {e}")
             await send_auto_task_webhook_notification(
@@ -2194,51 +2479,56 @@ async def check_and_buy_upload():
             final_seedbonus = None
             api_url = f"{app.config.get('MAM_API_URL')}/json/bonusBuy.php/"
 
-            async with httpx.AsyncClient() as client:
-                for chunk in chunks:
-                    try:
-                        if len(chunks) > 1 and chunk != chunks[0]:
-                            await asyncio.sleep(0.5)
+            for chunk in chunks:
+                try:
+                    if len(chunks) > 1 and chunk != chunks[0]:
+                        await asyncio.sleep(0.5)
 
-                        epoch_ms = int(time.time() * 1000)
-                        params = {'spendtype': 'upload', 'amount': chunk, '_': epoch_ms}
-                        response = await client.get(api_url, params=params, cookies=mam_session_cookies, timeout=10)
-                        update_cookies(response)
-                        response.raise_for_status()
-                        result = response.json()
+                    epoch_ms = int(time.time() * 1000)
+                    params = {'spendtype': 'upload', 'amount': chunk, '_': epoch_ms}
+                    response = await request_mam(
+                        "GET",
+                        api_url,
+                        params=params,
+                        cookies=mam_session_cookies,
+                        timeout=10,
+                    )
+                    update_cookies(response)
+                    response.raise_for_status()
+                    result = response.json()
 
-                        if result.get('success'):
-                            try:
-                                amt_added = result.get('amount')
-                                val = float(amt_added) if str(amt_added).lower() != 'max' else 0
-                                total_purchased += val
-                            except Exception:
-                                pass
+                    if result.get('success'):
+                        try:
+                            amt_added = result.get('amount')
+                            val = float(amt_added) if str(amt_added).lower() != 'max' else 0
+                            total_purchased += val
+                        except Exception:
+                            pass
 
-                            final_seedbonus = result.get('seedbonus')
-                        else:
-                            error = normalize_spaces(
-                                result.get('error')
-                                or result.get('message')
-                                or json.dumps(result, ensure_ascii=True)
-                            )
-                            app.logger.warning(f"[AUTO-UPLOAD-{reason.upper()}] Purchase failed: {result}")
-                            return {
-                                "success": False,
-                                "amount": total_purchased,
-                                "seedbonus": final_seedbonus,
-                                "error": error,
-                                "reason": reason,
-                            }
-                    except Exception as e:
-                        app.logger.error(f"[AUTO-UPLOAD-{reason.upper()}] Error: {e}")
+                        final_seedbonus = result.get('seedbonus')
+                    else:
+                        error = normalize_spaces(
+                            result.get('error')
+                            or result.get('message')
+                            or json.dumps(result, ensure_ascii=True)
+                        )
+                        app.logger.warning(f"[AUTO-UPLOAD-{reason.upper()}] Purchase failed: {result}")
                         return {
                             "success": False,
                             "amount": total_purchased,
                             "seedbonus": final_seedbonus,
-                            "error": str(e),
+                            "error": error,
                             "reason": reason,
                         }
+                except Exception as e:
+                    app.logger.error(f"[AUTO-UPLOAD-{reason.upper()}] Error: {e}")
+                    return {
+                        "success": False,
+                        "amount": total_purchased,
+                        "seedbonus": final_seedbonus,
+                        "error": str(e),
+                        "reason": reason,
+                    }
 
             if total_purchased <= 0:
                 error = "Purchase failed: no upload credit added"
@@ -2747,24 +3037,23 @@ async def mam_autosuggest():
         return normalize_spaces(value).lower()
 
     try:
-        async with httpx.AsyncClient() as client:
-            raw_results = []
-            for query_text in query_candidates:
-                params["tor[text]"] = query_text
-                resp = await client.get(url, params=params, cookies=mam_session_cookies, timeout=5.0)
-                update_cookies(resp)
-                if resp.status_code != 200:
-                    continue
-                data = resp.json()
-                raw_results = data.get('data', [])
-                if raw_results:
-                    break
+        raw_results = []
+        for query_text in query_candidates:
+            params["tor[text]"] = query_text
+            resp = await request_mam("GET", url, params=params, cookies=mam_session_cookies, timeout=5.0)
+            update_cookies(resp)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            raw_results = data.get('data', [])
+            if raw_results:
+                break
 
-            if not raw_results:
-                return autosuggest_response([])
-            phrase_candidates = []
+        if not raw_results:
+            return autosuggest_response([])
+        phrase_candidates = []
 
-            for row_index, row in enumerate(raw_results):
+        for row_index, row in enumerate(raw_results):
                 # -- Parse Author --
                 author_str = "Unknown"
                 try:
@@ -2829,22 +3118,22 @@ async def mam_autosuggest():
                         "field_priority": field_priority[field],
                     })
 
-            phrase_candidates.sort(
-                key=lambda item: (-item["score"], item["field_priority"], -item["seeders"], item["row_index"])
-            )
-            suggestions = [
-                {
-                    "primary_type": item["primary_type"],
-                    "primary_text": item["primary_text"],
-                    "author_text": item.get("author_text", ""),
-                    "seeders": item["seeders"],
-                    "match_score": round(item["score"], 2),
-                }
-                for item in phrase_candidates[:suggestion_limit]
-            ]
+        phrase_candidates.sort(
+            key=lambda item: (-item["score"], item["field_priority"], -item["seeders"], item["row_index"])
+        )
+        suggestions = [
+            {
+                "primary_type": item["primary_type"],
+                "primary_text": item["primary_text"],
+                "author_text": item.get("author_text", ""),
+                "seeders": item["seeders"],
+                "match_score": round(item["score"], 2),
+            }
+            for item in phrase_candidates[:suggestion_limit]
+        ]
 
-            await set_cached_autosuggest_response(cache_key, suggestions)
-            return autosuggest_response(suggestions)
+        await set_cached_autosuggest_response(cache_key, suggestions)
+        return autosuggest_response(suggestions)
 
     except Exception as e:
         app.logger.error(f"MAM Autosuggest Error: {e}")
@@ -2855,12 +3144,17 @@ async def mam_autosuggest():
 async def mam_status(): 
     result = await fetch_mam_json_load_result()
     if result["data"] is not None:
-        return jsonify({'status': 'connected', 'message': 'MyAnonaMouse is connected.'})
+        return jsonify({
+            'status': 'connected',
+            'message': 'MyAnonaMouse is connected.',
+            'proxy_status': build_mam_proxy_status_payload(),
+        })
 
     status_code = result["status_code"] if result["status_code"] is not None else 401
     return jsonify({
         'status': 'not connected',
         'message': result["message"] or 'Not logged into MAM or failed to fetch data',
+        'proxy_status': build_mam_proxy_status_payload(),
     }), status_code
 
 
@@ -2910,12 +3204,14 @@ async def mam_user_data():
         return jsonify({
             'error': result["message"] or 'Not logged into MAM or failed to fetch data',
             'message': result["message"] or 'Not logged into MAM or failed to fetch data',
+            'proxy_status': build_mam_proxy_status_payload(),
         }), status_code
         
     if seedbonus := user_data.get("seedbonus"):
         user_data["seedbonus_formatted"] = f"{seedbonus:,}"
 
     user_data["message"] = "MyAnonaMouse is connected."
+    user_data["proxy_status"] = build_mam_proxy_status_payload()
         
     return jsonify(user_data)
 
@@ -2957,19 +3253,18 @@ async def mam_buy_vip():
             '_': epoch_ms
         }
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(api_url, params=params, cookies=mam_session_cookies, timeout=10)
-            update_cookies(response)
-            response.raise_for_status()
-            result = response.json()
+        response = await request_mam("GET", api_url, params=params, cookies=mam_session_cookies, timeout=10)
+        update_cookies(response)
+        response.raise_for_status()
+        result = response.json()
 
-            # Log the result
-            if result.get('success'):
-                app.logger.info(f"VIP purchase successful - Duration: {duration}, Amount added: {result.get('amount')} weeks, Remaining bonus: {result.get('seedbonus')}")
-            else:
-                app.logger.warning(f"VIP purchase failed: {result}")
+        # Log the result
+        if result.get('success'):
+            app.logger.info(f"VIP purchase successful - Duration: {duration}, Amount added: {result.get('amount')} weeks, Remaining bonus: {result.get('seedbonus')}")
+        else:
+            app.logger.warning(f"VIP purchase failed: {result}")
 
-            return jsonify(result)
+        return jsonify(result)
     except Exception as e:
         app.logger.error(f"Error buying VIP credit: {e}")
         return jsonify({'success': False, 'error': 'Failed to purchase VIP'}), 503
@@ -3027,46 +3322,45 @@ async def mam_buy_upload():
     errors = []
     api_url = f"{app.config.get('MAM_API_URL')}/json/bonusBuy.php/"
 
-    async with httpx.AsyncClient() as client:
-        for chunk in chunks:
-            try:
-                # Rate limit safety sleep between multi-chunk requests
-                if len(chunks) > 1 and chunk != chunks[0]:
-                    await asyncio.sleep(0.5)
+    for chunk in chunks:
+        try:
+            # Rate limit safety sleep between multi-chunk requests
+            if len(chunks) > 1 and chunk != chunks[0]:
+                await asyncio.sleep(0.5)
 
-                epoch_ms = int(time.time() * 1000)
-                params = {
-                    'spendtype': 'upload', 
-                    'amount': chunk, 
-                    '_': epoch_ms
-                }
-                
-                response = await client.get(api_url, params=params, cookies=mam_session_cookies, timeout=10)
-                update_cookies(response)
-                response.raise_for_status()
-                result = response.json()
+            epoch_ms = int(time.time() * 1000)
+            params = {
+                'spendtype': 'upload',
+                'amount': chunk,
+                '_': epoch_ms
+            }
 
-                if result.get('success'):
-                    amt_added = result.get('amount')
-                    # Handle 'max' return or numeric return
-                    try:
-                        val = float(amt_added) if str(amt_added).lower() != 'max' else 0
-                        total_purchased += val
-                    except: 
-                        pass
-                        
-                    final_seedbonus = result.get('seedbonus')
-                    app.logger.info(f"[BUY-UPLOAD] Chunk {chunk} success.")
-                else:
-                    msg = result.get('error') or result.get('message') or 'Unknown error'
-                    app.logger.warning(f"[BUY-UPLOAD] Chunk {chunk} failed: {msg}")
-                    errors.append(f"Failed on {chunk}: {msg}")
-                    break # Stop on first failure
-                    
-            except Exception as e:
-                app.logger.error(f"[BUY-UPLOAD] Exception on chunk {chunk}: {e}")
-                errors.append(f"Error on {chunk}: {str(e)}")
-                break
+            response = await request_mam("GET", api_url, params=params, cookies=mam_session_cookies, timeout=10)
+            update_cookies(response)
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get('success'):
+                amt_added = result.get('amount')
+                # Handle 'max' return or numeric return
+                try:
+                    val = float(amt_added) if str(amt_added).lower() != 'max' else 0
+                    total_purchased += val
+                except:
+                    pass
+
+                final_seedbonus = result.get('seedbonus')
+                app.logger.info(f"[BUY-UPLOAD] Chunk {chunk} success.")
+            else:
+                msg = result.get('error') or result.get('message') or 'Unknown error'
+                app.logger.warning(f"[BUY-UPLOAD] Chunk {chunk} failed: {msg}")
+                errors.append(f"Failed on {chunk}: {msg}")
+                break # Stop on first failure
+
+        except Exception as e:
+            app.logger.error(f"[BUY-UPLOAD] Exception on chunk {chunk}: {e}")
+            errors.append(f"Error on {chunk}: {str(e)}")
+            break
 
     # 4. Return result
     success = len(errors) == 0
@@ -3127,11 +3421,10 @@ async def purchase_personal_fl_wedge(torrentid: int) -> dict:
         'timestamp': epoch_ms,
     }
 
-    async with httpx.AsyncClient() as client:
-        response = await client.get(api_url, params=params, cookies=mam_session_cookies, timeout=10)
-        update_cookies(response)
-        response.raise_for_status()
-        result = response.json()
+    response = await request_mam("GET", api_url, params=params, cookies=mam_session_cookies, timeout=10)
+    update_cookies(response)
+    response.raise_for_status()
+    result = response.json()
 
     if result.get('success'):
         await push_mam_stats()
@@ -3214,14 +3507,11 @@ async def fetch_mam_json_load_result():
 
     api_url = f"{url}/jsonLoad.php"
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(api_url, cookies=mam_session_cookies, timeout=10)
-
-            update_cookies(response)
-
-            response.raise_for_status()
-            data = response.json()
-            return {"data": data, "message": "MyAnonaMouse is connected.", "status_code": response.status_code}
+        response = await request_mam("GET", api_url, cookies=mam_session_cookies, timeout=10)
+        update_cookies(response)
+        response.raise_for_status()
+        data = response.json()
+        return {"data": data, "message": "MyAnonaMouse is connected.", "status_code": response.status_code}
     except httpx.HTTPStatusError as exc:
         status_code = exc.response.status_code if exc.response is not None else 502
         response_preview = ""
@@ -3334,10 +3624,9 @@ async def fetch_torrent_file_from_mam(torrent_url: str) -> tuple[bytes | None, s
     await ensure_mam_session_cookie()
 
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
-            response = await client.get(torrent_url, cookies=mam_session_cookies)
-            update_cookies(response)
-            response.raise_for_status()
+        response = await request_mam("GET", torrent_url, cookies=mam_session_cookies, timeout=15.0)
+        update_cookies(response)
+        response.raise_for_status()
 
         torrent_bytes = response.content
         if not torrent_bytes:
@@ -4550,137 +4839,141 @@ async def mam_search():
 
     headers = {"Cookie": "; ".join([f"{k}={v}" for k, v in mam_session_cookies.items()])}
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(f"{app.config['MAM_API_URL']}/tor/js/loadSearchJSONbasic.php", params=params, headers=headers)
-            update_cookies(response)
-            response.raise_for_status()
-            json_data = response.json()
-            results = json_data.get("data", [])
-            
-            # --- STEP 1: Rank Results FIRST ---
-            # We must rank BEFORE cleaning because rank_results expects raw JSON strings
-            ranked = rank_results(results)
-            
-            base_dl_url = f"{app.config['MAM_API_URL']}/tor/download.php/"
-            
-            # --- STEP 2: Clean Data for Display ---
-            # Now we decode HTML entities and fix formatting on the sorted list
-            for item in ranked:
-                # 1. Handle Download Links
-                if dl_hash := item.get('dl'): 
-                    item['download_link'] = base_dl_url + dl_hash
-                else: 
-                    item['download_link'] = '' 
+        response = await request_mam(
+            "GET",
+            f"{app.config['MAM_API_URL']}/tor/js/loadSearchJSONbasic.php",
+            params=params,
+            headers=headers,
+        )
+        update_cookies(response)
+        response.raise_for_status()
+        json_data = response.json()
+        results = json_data.get("data", [])
 
-                # 2. Handle Thumbnails
-                if not item.get('thumbnail'):
-                    if item.get('id'):
-                        item['thumbnail'] = f"https://cdn.myanonamouse.net/t/p/small/{item['id']}.webp"
-                        item["has_mam_cover"] = True
-                    else:
-                        cat = item.get('category', '')
-                        item['thumbnail'] = f"https://static.myanonamouse.net/pic/cats/3/{cat}.png"
-                        item["has_mam_cover"] = False
-                else:
+        # --- STEP 1: Rank Results FIRST ---
+        # We must rank BEFORE cleaning because rank_results expects raw JSON strings
+        ranked = rank_results(results)
+
+        base_dl_url = f"{app.config['MAM_API_URL']}/tor/download.php/"
+
+        # --- STEP 2: Clean Data for Display ---
+        # Now we decode HTML entities and fix formatting on the sorted list
+        for item in ranked:
+            # 1. Handle Download Links
+            if dl_hash := item.get('dl'):
+                item['download_link'] = base_dl_url + dl_hash
+            else:
+                item['download_link'] = ''
+
+            # 2. Handle Thumbnails
+            if not item.get('thumbnail'):
+                if item.get('id'):
+                    item['thumbnail'] = f"https://cdn.myanonamouse.net/t/p/small/{item['id']}.webp"
                     item["has_mam_cover"] = True
+                else:
+                    cat = item.get('category', '')
+                    item['thumbnail'] = f"https://static.myanonamouse.net/pic/cats/3/{cat}.png"
+                    item["has_mam_cover"] = False
+            else:
+                item["has_mam_cover"] = True
 
-                # 3. Decode Metadata (Author, Narrator, Series)
-                # Note: rank_results may have already partially parsed these into strings.
-                # parse_mam_metadata handles both JSON strings AND plain strings safely.
-                item['author_info'] = parse_mam_metadata(item.get('author_info', ''))
-                item['narrator_info'] = parse_mam_metadata(item.get('narrator_info', ''))
-                
-                # Overwrite series_display with our cleaner, HTML-decoded version
-                item['series_display'] = parse_mam_metadata(item.get('series_info', ''), is_series=True)
+            # 3. Decode Metadata (Author, Narrator, Series)
+            # Note: rank_results may have already partially parsed these into strings.
+            # parse_mam_metadata handles both JSON strings AND plain strings safely.
+            item['author_info'] = parse_mam_metadata(item.get('author_info', ''))
+            item['narrator_info'] = parse_mam_metadata(item.get('narrator_info', ''))
 
-                language_id = str(item.get("language", "")).strip()
-                language_name = LANGUAGE_BY_ID.get(language_id)
-                if not language_name:
-                    language_name = item.get("lang_code") or item.get("language") or "Unknown"
-                item["language_name"] = language_name
+            # Overwrite series_display with our cleaner, HTML-decoded version
+            item['series_display'] = parse_mam_metadata(item.get('series_info', ''), is_series=True)
 
-            # ... Rest of your function ...
-            client_status_data = await torrent_client.get_status() if torrent_client else {"status": "error"}
-            client_connected = client_status_data.get("status") == "success"
-            categories = await torrent_client.get_categories() if client_connected else {}
-            
-            mid_to_hash = {}
-            if client_connected and torrent_client:
-                try:
-                    all_torrents = await torrent_client.get_torrents_with_metadata()
-                    for torrent in all_torrents:
-                        comment = torrent.get('comment', '')
-                        if comment:
-                            mid_match = re.search(r'MID=(\d+)', comment)
-                            if mid_match:
-                                mid = mid_match.group(1)
-                                torrent_hash = torrent.get('hash', '')
-                                if torrent_hash:
-                                    mid_to_hash[mid] = torrent_hash
-                except Exception as e:
-                    app.logger.warning(f"Failed to fetch torrents with metadata: {e}")
-            
-            for item in ranked:
+            language_id = str(item.get("language", "")).strip()
+            language_name = LANGUAGE_BY_ID.get(language_id)
+            if not language_name:
+                language_name = item.get("lang_code") or item.get("language") or "Unknown"
+            item["language_name"] = language_name
+
+        # ... Rest of your function ...
+        client_status_data = await torrent_client.get_status() if torrent_client else {"status": "error"}
+        client_connected = client_status_data.get("status") == "success"
+        categories = await torrent_client.get_categories() if client_connected else {}
+
+        mid_to_hash = {}
+        if client_connected and torrent_client:
+            try:
+                all_torrents = await torrent_client.get_torrents_with_metadata()
+                for torrent in all_torrents:
+                    comment = torrent.get('comment', '')
+                    if comment:
+                        mid_match = re.search(r'MID=(\d+)', comment)
+                        if mid_match:
+                            mid = mid_match.group(1)
+                            torrent_hash = torrent.get('hash', '')
+                            if torrent_hash:
+                                mid_to_hash[mid] = torrent_hash
+            except Exception as e:
+                app.logger.warning(f"Failed to fetch torrents with metadata: {e}")
+
+        for item in ranked:
+            item_id = str(item.get('id', ''))
+            if item_id in mid_to_hash:
+                item['my_snatched'] = 1
+
+        metadata = load_database()
+        for item in ranked:
+            if item.get('my_snatched') == 1:
                 item_id = str(item.get('id', ''))
-                if item_id in mid_to_hash:
-                    item['my_snatched'] = 1
-            
-            metadata = load_database()
-            for item in ranked:
-                if item.get('my_snatched') == 1:
-                    item_id = str(item.get('id', ''))
-                    torrent_hash = mid_to_hash.get(item_id)
-                    if torrent_hash and torrent_hash not in metadata:
-                        metadata[torrent_hash] = {
-                            "mid": item_id,
-                            "author": item.get('author_info', ''), 
-                            "title": item.get('title', ''),
-                            "added_on": datetime.now().isoformat(),
-                            "status": "unknown",
-                            "retry_count": 0,
-                            "series_info": item.get('series_display', ''), 
-                            "category": get_category_name(item.get('main_cat', '')),
-                            "download_link": item.get('download_link', '')
-                        }
-            
-            if any(item.get('my_snatched') == 1 for item in ranked):
-                save_database(metadata)
+                torrent_hash = mid_to_hash.get(item_id)
+                if torrent_hash and torrent_hash not in metadata:
+                    metadata[torrent_hash] = {
+                        "mid": item_id,
+                        "author": item.get('author_info', ''),
+                        "title": item.get('title', ''),
+                        "added_on": datetime.now().isoformat(),
+                        "status": "unknown",
+                        "retry_count": 0,
+                        "series_info": item.get('series_display', ''),
+                        "category": get_category_name(item.get('main_cat', '')),
+                        "download_link": item.get('download_link', '')
+                    }
 
-            display_results = ranked
-            if hide_downloaded:
-                display_results = [
-                    item for item in ranked
-                    if str(item.get('my_snatched', 0)) != "1"
-                ]
+        if any(item.get('my_snatched') == 1 for item in ranked):
+            save_database(metadata)
 
-            search_duration_ms = (time.monotonic() - search_started_at) * 1000
-            app.logger.info(
-                f"[SEARCH] results={len(display_results)} query_len={len(query)} "
-                f"scope={params.get('tor[searchIn]', 'torrents')} duration_ms={search_duration_ms:.1f}"
-            )
-            
-            rendered_results = await render_template(
-                "partials/results.html",
-                results=display_results,
-                search_id=search_id,
-                HARDCOVER_ENRICHMENT_ACTIVE=hardcover_enrichment_is_active(),
-                CLIENT_STATUS="CONNECTED" if client_connected else "NOT CONNECTED",
-                categories=categories,
-                TORRENT_CLIENT_CATEGORY=app.config.get("TORRENT_CLIENT_CATEGORY", ""),
-                DESTINATION_PATHS=app.config.get("DESTINATION_PATHS", FALLBACK_CONFIG["DESTINATION_PATHS"]),
-                TYPE_SPECIFIC_TORRENT_CATEGORIES=app.config.get(
-                    "TYPE_SPECIFIC_TORRENT_CATEGORIES",
-                    FALLBACK_CONFIG["TYPE_SPECIFIC_TORRENT_CATEGORIES"],
-                ),
-                IS_VIP_ACTIVE=is_vip_active,
-                RESULTS_DISPLAY_FIELDS=app.config.get(
-                    "RESULTS_DISPLAY_FIELDS",
-                    FALLBACK_CONFIG["RESULTS_DISPLAY_FIELDS"]
-                ),
-            )
-            if display_results and hardcover_enrichment_is_active():
-                initialize_hardcover_enrichment_batch(search_id, copy.deepcopy(display_results))
-            return rendered_results
+        display_results = ranked
+        if hide_downloaded:
+            display_results = [
+                item for item in ranked
+                if str(item.get('my_snatched', 0)) != "1"
+            ]
+
+        search_duration_ms = (time.monotonic() - search_started_at) * 1000
+        app.logger.info(
+            f"[SEARCH] results={len(display_results)} query_len={len(query)} "
+            f"scope={params.get('tor[searchIn]', 'torrents')} duration_ms={search_duration_ms:.1f}"
+        )
+
+        rendered_results = await render_template(
+            "partials/results.html",
+            results=display_results,
+            search_id=search_id,
+            HARDCOVER_ENRICHMENT_ACTIVE=hardcover_enrichment_is_active(),
+            CLIENT_STATUS="CONNECTED" if client_connected else "NOT CONNECTED",
+            categories=categories,
+            TORRENT_CLIENT_CATEGORY=app.config.get("TORRENT_CLIENT_CATEGORY", ""),
+            DESTINATION_PATHS=app.config.get("DESTINATION_PATHS", FALLBACK_CONFIG["DESTINATION_PATHS"]),
+            TYPE_SPECIFIC_TORRENT_CATEGORIES=app.config.get(
+                "TYPE_SPECIFIC_TORRENT_CATEGORIES",
+                FALLBACK_CONFIG["TYPE_SPECIFIC_TORRENT_CATEGORIES"],
+            ),
+            IS_VIP_ACTIVE=is_vip_active,
+            RESULTS_DISPLAY_FIELDS=app.config.get(
+                "RESULTS_DISPLAY_FIELDS",
+                FALLBACK_CONFIG["RESULTS_DISPLAY_FIELDS"]
+            ),
+        )
+        if display_results and hardcover_enrichment_is_active():
+            initialize_hardcover_enrichment_batch(search_id, copy.deepcopy(display_results))
+        return rendered_results
     except Exception as e:
         error_message = format_mam_search_error(e)
         app.logger.error(
@@ -4816,6 +5109,8 @@ async def get_public_ip():
     """
     Fetches the backend's public IP address.
     """
+    route_mode = str(request.args.get("route", "direct") or "direct").strip().lower()
+    use_mam_route = route_mode == "mam"
 
     def extract_ip(raw_text):
         try:
@@ -4849,34 +5144,42 @@ async def get_public_ip():
     ]
 
     try:
-        # We use httpx instead of os.system('curl') because it is async,
-        # non-blocking, and works reliably in serverless environments.
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            for resolver_name, resolver_url in resolvers:
-                try:
-                    response = await client.get(
-                        resolver_url,
-                        headers={"Accept": "application/json, text/plain;q=0.9, */*;q=0.8"},
-                        timeout=5.0,
-                    )
-                    response.raise_for_status()
+        for resolver_name, resolver_url in resolvers:
+            try:
+                response = await request_with_optional_proxy(
+                    "GET",
+                    resolver_url,
+                    force_proxy=use_mam_route,
+                    force_direct=not use_mam_route,
+                    headers={"Accept": "application/json, text/plain;q=0.9, */*;q=0.8"},
+                    timeout=5.0,
+                )
+                response.raise_for_status()
 
-                    resolved_ip = extract_ip(response.text)
-                    if resolved_ip:
-                        return jsonify({'ip': resolved_ip})
+                resolved_ip = extract_ip(response.text)
+                if resolved_ip:
+                    return jsonify({
+                        'ip': resolved_ip,
+                        'route': 'mam' if use_mam_route else 'direct',
+                        'proxy_status': build_mam_proxy_status_payload(),
+                    })
 
-                    app.logger.warning(
-                        f"Public IP resolver {resolver_name} returned an unusable response"
-                    )
-                except Exception as resolver_error:
-                    app.logger.warning(
-                        f"Public IP resolver {resolver_name} failed: {resolver_error}"
-                    )
+                app.logger.warning(
+                    f"Public IP resolver {resolver_name} returned an unusable response"
+                )
+            except Exception as resolver_error:
+                app.logger.warning(
+                    f"Public IP resolver {resolver_name} failed: {resolver_error}"
+                )
     except Exception as e:
         app.logger.error(f"Failed to fetch public IP: {e}")
 
     app.logger.error("Failed to fetch public IP from all configured resolvers")
-    return jsonify({'error': 'Could not fetch IP'}), 500
+    return jsonify({
+        'error': 'Could not fetch IP',
+        'route': 'mam' if use_mam_route else 'direct',
+        'proxy_status': build_mam_proxy_status_payload(),
+    }), 500
     
 FETCH_SEMAPHORE = asyncio.Semaphore(200)
 
@@ -5008,6 +5311,9 @@ async def update_settings():
         "HARDCOVER_ENRICHMENT_ENABLED",
         "ENABLE_DYNAMIC_IP_UPDATE",
         "USE_MOUSEHOLE_MAM_COOKIE",
+        "MAM_PROXY_ENABLED",
+        "MAM_PROXY_ONLY",
+        "MAM_PROXY_FALLBACK_DIRECT",
         "AUTO_BUY_VIP",
         "AUTO_BUY_UPLOAD_ON_RATIO",
         "AUTO_BUY_UPLOAD_ON_BUFFER",
@@ -5140,6 +5446,7 @@ async def update_settings():
         "client_display_name": display_name,
         "mousehole_cookie": format_cookie_for_display(mousehole_last_mam_cookie),
         "mousehole_ip": mousehole_last_host_ip,
+        "proxy_status": build_mam_proxy_status_payload(),
     })
 
 @app.route("/update_result_display_fields", methods=["POST"])
