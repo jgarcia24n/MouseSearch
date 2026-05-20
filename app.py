@@ -956,6 +956,7 @@ FALLBACK_CONFIG = {
     "TORRENT_CLIENT_USERNAME": "admin",
     "TORRENT_CLIENT_PASSWORD": "",
     "TORRENT_CLIENT_CATEGORY": "",
+    "QBITTORRENT_VERIFY_WEBUI_CERTIFICATE": True,
     "RTORRENT_DIGEST_AUTH": False,
     "MAM_ID": "",
     "USE_MOUSEHOLE_MAM_COOKIE": False,
@@ -1011,6 +1012,7 @@ FALLBACK_CONFIG = {
     "RESULTS_DISPLAY_FIELDS": ["narrator", "series", "file_size", "file_type", "seeders"],
     "SEARCH_FILTER_DEFAULTS": copy.deepcopy(DEFAULT_SEARCH_FILTER_DEFAULTS),
 }
+ENV_ONLY_CONFIG_KEYS = {"QBITTORRENT_VERIFY_WEBUI_CERTIFICATE"}
 
 # Set up data directory and paths
 DATA_PATH = Path(os.getenv("DATA_PATH", FALLBACK_CONFIG["DATA_PATH"])).resolve()
@@ -1527,6 +1529,8 @@ def load_config():
                 pass # corrupted config, ignore
 
     json_overrides = dict(json_config)
+    for key in ENV_ONLY_CONFIG_KEYS:
+        json_overrides.pop(key, None)
     if (
         "AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_MB" not in json_overrides
         and "AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_GB" in json_overrides
@@ -1611,7 +1615,8 @@ def load_config():
         "AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_ENABLED",
         "ENABLE_FILESYSTEM_THUMBNAIL_CACHE",
         "RTORRENT_DIGEST_AUTH",
-        "HARDCOVER_ENRICHMENT_ENABLED"
+        "HARDCOVER_ENRICHMENT_ENABLED",
+        "QBITTORRENT_VERIFY_WEBUI_CERTIFICATE",
     ]:
         config[key] = coerce_bool(config.get(key), FALLBACK_CONFIG[key])
         val = config[key]
@@ -1648,7 +1653,11 @@ def load_config():
     return config
 
 def save_config(config):
-    config_to_save = {key: config.get(key) for key in FALLBACK_CONFIG.keys()}
+    config_to_save = {
+        key: config.get(key)
+        for key in FALLBACK_CONFIG.keys()
+        if key not in ENV_ONLY_CONFIG_KEYS
+    }
     with open(CONFIG_FILE, "w") as f:
         json.dump(config_to_save, f, indent=4)
 

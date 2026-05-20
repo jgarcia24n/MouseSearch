@@ -8,8 +8,10 @@ import qbittorrentapi
 from qbittorrentapi.exceptions import (
     APIConnectionError,
     APIError,
+    Conflict409Error,
     LoginFailed,
     UnsupportedMediaType415Error,
+    UnsupportedQbittorrentVersion,
 )
 
 from .base import TorrentClient
@@ -18,6 +20,21 @@ from hashing import calculate_torrent_hash_from_bytes
 
 logger = logging.getLogger(__name__)
 INFO_HASH_RE = re.compile(r"\b[a-fA-F0-9]{40}\b")
+
+
+def _coerce_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    return default
 
 
 def _normalize_base_url(url: str | None) -> str:
@@ -69,6 +86,10 @@ class QBittorrentClient(TorrentClient):
         self.force_start_on_add = str(os.getenv("QB_FORCE_START", "false")).strip().lower() in {
             "1", "true", "t", "yes", "y", "on"
         }
+        self.verify_webui_certificate = _coerce_bool(
+            config.get("QBITTORRENT_VERIFY_WEBUI_CERTIFICATE"),
+            True,
+        )
         self._client = self._build_client()
         self._client_lock = asyncio.Lock()
 
@@ -84,6 +105,7 @@ class QBittorrentClient(TorrentClient):
             password=self.password,
             EXTRA_HEADERS=extra_headers,
             REQUESTS_ARGS={"timeout": (5, 30)},
+            VERIFY_WEBUI_CERTIFICATE=self.verify_webui_certificate,
             DISABLE_LOGGING_DEBUG_OUTPUT=True,
         )
 
@@ -145,6 +167,19 @@ class QBittorrentClient(TorrentClient):
             self._sync_session_cookies()
             return result
 
+    def _format_api_error(self, exc: Exception, *, action: str = "communicate with qBittorrent") -> str:
+        if isinstance(exc, UnsupportedQbittorrentVersion):
+            return f"Unsupported qBittorrent/Web API version: {exc}"
+        if isinstance(exc, LoginFailed):
+            return "Authentication failed"
+        if isinstance(exc, Conflict409Error):
+            return "Torrent already exists in qBittorrent"
+        if isinstance(exc, UnsupportedMediaType415Error):
+            return "Invalid torrent file or URL"
+        if isinstance(exc, APIConnectionError):
+            return f"Failed to {action}: {exc}"
+        return str(exc) or f"Failed to {action}"
+
     async def login(self) -> bool:
         if not all([self.base_url, self.username, self.password]):
             self._set_last_error("qBittorrent client URL, username, or password is missing")
@@ -164,20 +199,30 @@ class QBittorrentClient(TorrentClient):
         except LoginFailed:
             self._set_last_error("Authentication failed")
             logger.warning("qBittorrent login rejected: url=%s", sanitized_url)
-        except APIConnectionError as exc:
-            self._set_last_error(f"Request error communicating with qBittorrent: {exc}")
+        except UnsupportedQbittorrentVersion as exc:
+            self._set_last_error(self._format_api_error(exc))
             logger.error(
-                "qBittorrent login request error: url=%s status=%s error=%s",
+                "qBittorrent login unsupported version: url=%s verify_cert=%s error=%s",
+                sanitized_url,
+                self.verify_webui_certificate,
+                str(exc),
+            )
+        except APIConnectionError as exc:
+            self._set_last_error(self._format_api_error(exc))
+            logger.error(
+                "qBittorrent login request error: url=%s status=%s verify_cert=%s error=%s",
                 sanitized_url,
                 "n/a",
+                self.verify_webui_certificate,
                 str(exc),
             )
         except Exception as exc:
             self._set_last_error(f"Unexpected qBittorrent login error: {exc}")
             logger.error(
-                "qBittorrent login unexpected error: url=%s status=%s error=%s",
+                "qBittorrent login unexpected error: url=%s status=%s verify_cert=%s error=%s",
                 sanitized_url,
                 "n/a",
+                self.verify_webui_certificate,
                 str(exc),
             )
         return False
@@ -209,16 +254,18 @@ class QBittorrentClient(TorrentClient):
                 "display_name": self.display_name,
             }
         except (APIConnectionError, APIError, Exception) as exc:
-            self._set_last_error(f"Failed to connect: {exc}")
+            message = self._format_api_error(exc, action="connect to qBittorrent")
+            self._set_last_error(message)
             logger.error(
-                "qBittorrent status check failed: url=%s status=%s error=%s",
+                "qBittorrent status check failed: url=%s status=%s verify_cert=%s error=%s",
                 sanitized_url,
                 "n/a",
+                self.verify_webui_certificate,
                 str(exc),
             )
             return {
                 "status": "error",
-                "message": f"Failed to connect: {exc}",
+                "message": message,
                 "display_name": self.display_name,
             }
 
@@ -270,8 +317,14 @@ class QBittorrentClient(TorrentClient):
             return result
         except UnsupportedMediaType415Error:
             return {"status": "error", "message": "Invalid torrent file (HTTP 415 from qBittorrent)"}
+        except Conflict409Error:
+            return {"status": "error", "message": "Torrent already exists in qBittorrent"}
+        except LoginFailed:
+            return {"status": "error", "message": "Authentication failed"}
+        except UnsupportedQbittorrentVersion as exc:
+            return {"status": "error", "message": self._format_api_error(exc)}
         except (APIConnectionError, APIError) as exc:
-            return {"status": "error", "message": f"Failed to communicate with qBittorrent: {exc}"}
+            return {"status": "error", "message": self._format_api_error(exc)}
 
     async def get_torrent_info(self, hash_val: str) -> dict:
         try:

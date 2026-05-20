@@ -3595,6 +3595,16 @@ document.addEventListener("DOMContentLoaded", async function () {
         }
     });
 
+    settingsForm?.addEventListener('change', (event) => {
+        if (isRestoringSettings) return;
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+
+        if (target.matches('#TORRENT_CLIENT_TYPE')) {
+            checkSettingsTorrentClientConnection();
+        }
+    });
+
     if (settingsOffcanvasEl) {
         settingsOffcanvasEl.addEventListener('show.bs.offcanvas', () => {
             captureSettingsSnapshot();
