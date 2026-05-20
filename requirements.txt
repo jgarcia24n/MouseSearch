@@ -6,3 +6,4 @@ python-dotenv==1.2.1
 Quart==0.20.0
 rapidfuzz==3.14.1
 socksio==1.0.0
+qbittorrent-api==2026.5.1
