@@ -3470,50 +3470,11 @@ async def mam_buy_upload():
 
 @app.route('/mam/buy_personal_fl', methods=['POST'])
 async def mam_buy_personal_fl():
-    """Spend a personal freeleech token (wedge) on a specific torrent."""
-    if not await login_mam():
-        return jsonify({'success': False, 'error': 'Not logged into MAM'}), 401
-
-    try:
-        data = await request.get_json() or {}
-        torrentid = data.get('torrentid') or data.get('torrent_id') or data.get('id')
-        if torrentid is None:
-            return jsonify({'success': False, 'error': 'Missing torrentid'}), 400
-
-        try:
-            torrentid = int(torrentid)
-        except (ValueError, TypeError):
-            return jsonify({'success': False, 'error': 'Invalid torrentid'}), 400
-
-        result = await purchase_personal_fl_wedge(torrentid)
-        return jsonify(result)
-    except Exception as e:
-        app.logger.error(f"Error buying personal freeleech: {e}")
-        return jsonify({'success': False, 'error': 'Failed to spend freeleech token'}), 503
-
-
-async def purchase_personal_fl_wedge(torrentid: int) -> dict:
-    """Attempt to spend a personal freeleech wedge for a torrent id."""
-    epoch_ms = int(time.time() * 1000)
-
-    api_url = f"{app.config.get('MAM_API_URL')}/json/bonusBuy.php/{epoch_ms}"
-    params = {
-        'spendtype': 'personalFL',
-        'torrentid': int(torrentid),
-        'timestamp': epoch_ms,
-    }
-
-    response = await request_mam("GET", api_url, params=params, cookies=mam_session_cookies, timeout=10)
-    update_cookies(response)
-    response.raise_for_status()
-    result = response.json()
-
-    if result.get('success'):
-        await push_mam_stats()
-    else:
-        app.logger.warning(f"[BUY-PERSONAL-FL] Purchase failed: {result}")
-
-    return result
+    """Deprecated: MAM no longer allows spending wedges through the API."""
+    return jsonify({
+        'success': False,
+        'error': 'Direct Freeleech wedge purchases via the MAM API are no longer supported. Start the download with the fl query flag instead.'
+    }), 410
         
 
 # Helper function to clean the specific MAM JSON format
@@ -3745,6 +3706,20 @@ async def fetch_torrent_file_from_mam(torrent_url: str) -> tuple[bytes | None, s
     except Exception as e:
         app.logger.error(f"Failed to download torrent file from MAM URL '{torrent_url}': {e}")
         return None, None
+
+
+def append_personal_freeleech_flag(torrent_url: str) -> str:
+    """Appends the MAM freeleech flag to a download URL without disturbing other query params."""
+    normalized_url = str(torrent_url or "").strip()
+    if not normalized_url:
+        return normalized_url
+
+    parsed = urlparse(normalized_url)
+    if any(key == "fl" for key, _ in parse_qsl(parsed.query, keep_blank_values=True)):
+        return normalized_url
+
+    next_query = f"{parsed.query}&fl" if parsed.query else "fl"
+    return parsed._replace(query=next_query).geturl()
     
 # --- GENERIC TORRENT CLIENT ROUTES ---
 @app.route('/client/status', methods=['GET'])
@@ -3980,6 +3955,7 @@ async def client_add_torrent():
     id = incoming_data.get('id', '0')
     category = incoming_data.get('category', app.config.get("TORRENT_CLIENT_CATEGORY", ""))
     torrent_size_str = incoming_data.get('size', '0 GiB')  # e.g., "1.5 GiB"
+    use_personal_freeleech_requested = coerce_bool(incoming_data.get('use_personal_freeleech'), False)
     is_public_freeleech = False
     try:
         is_public_freeleech = int(incoming_data.get('free', 0) or 0) == 1
@@ -3990,58 +3966,49 @@ async def client_add_torrent():
         is_personal_freeleech = int(incoming_data.get('personal_freeleech', 0) or 0) == 1
     except (ValueError, TypeError):
         is_personal_freeleech = False
-
-    if app.config.get("AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD", False):
-        if is_public_freeleech:
-            app.logger.info("[DOWNLOAD] Auto Freeleech wedge purchase skipped: torrent is already public freeleech.")
-        elif is_personal_freeleech:
-            app.logger.info("[DOWNLOAD] Auto Freeleech wedge purchase skipped: torrent already has personal freeleech.")
-        else:
+    should_use_personal_freeleech = False
+    if is_public_freeleech:
+        app.logger.info("[DOWNLOAD] Personal Freeleech flag skipped: torrent is already public freeleech.")
+    elif is_personal_freeleech:
+        app.logger.info("[DOWNLOAD] Personal Freeleech flag skipped: torrent already has personal freeleech.")
+    elif use_personal_freeleech_requested:
+        should_use_personal_freeleech = True
+        app.logger.info(f"[DOWNLOAD] Personal Freeleech will be requested via download URL for torrent {id}")
+    elif app.config.get("AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD", False):
+        torrent_id_for_fl = None
+        try:
+            if id not in (None, '', '0', 0):
+                torrent_id_for_fl = int(id)
+        except (ValueError, TypeError):
             torrent_id_for_fl = None
-            try:
-                if id not in (None, '', '0', 0):
-                    torrent_id_for_fl = int(id)
-            except (ValueError, TypeError):
-                torrent_id_for_fl = None
 
-            if torrent_id_for_fl is not None:
-                min_size_enabled = app.config.get("AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_ENABLED", False)
-                min_size_mb = app.config.get("AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_MB", 0)
-                torrent_size_gb = parse_size_to_gb(torrent_size_str, default=None)
-                should_purchase_fl = True
+        if torrent_id_for_fl is not None:
+            min_size_enabled = app.config.get("AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_ENABLED", False)
+            min_size_mb = app.config.get("AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_MB", 0)
+            torrent_size_gb = parse_size_to_gb(torrent_size_str, default=None)
+            should_use_personal_freeleech = True
 
-                if min_size_enabled:
-                    if torrent_size_gb is None:
-                        should_purchase_fl = False
-                        app.logger.info(
-                            f"[DOWNLOAD] Auto Freeleech wedge purchase skipped for torrent {torrent_id_for_fl}; "
-                            f"could not parse torrent size '{torrent_size_str}' for threshold check."
-                        )
-                    elif torrent_size_gb * 1024 <= min_size_mb:
-                        should_purchase_fl = False
-                        app.logger.info(
-                            f"[DOWNLOAD] Auto Freeleech wedge purchase skipped for torrent {torrent_id_for_fl}; "
-                            f"size {torrent_size_gb * 1024:.2f} MB is not greater than threshold {min_size_mb:.2f} MB."
-                        )
+            if min_size_enabled:
+                if torrent_size_gb is None:
+                    should_use_personal_freeleech = False
+                    app.logger.info(
+                        f"[DOWNLOAD] Auto Freeleech flag skipped for torrent {torrent_id_for_fl}; "
+                        f"could not parse torrent size '{torrent_size_str}' for threshold check."
+                    )
+                elif torrent_size_gb * 1024 <= min_size_mb:
+                    should_use_personal_freeleech = False
+                    app.logger.info(
+                        f"[DOWNLOAD] Auto Freeleech flag skipped for torrent {torrent_id_for_fl}; "
+                        f"size {torrent_size_gb * 1024:.2f} MB is not greater than threshold {min_size_mb:.2f} MB."
+                    )
 
-                if should_purchase_fl:
-                    try:
-                        if await login_mam():
-                            fl_result = await purchase_personal_fl_wedge(torrent_id_for_fl)
-                            if fl_result.get('success'):
-                                app.logger.info(f"[DOWNLOAD] Auto-purchased Freeleech wedge for torrent {torrent_id_for_fl}")
-                            else:
-                                app.logger.warning(
-                                    f"[DOWNLOAD] Auto Freeleech wedge purchase failed for torrent {torrent_id_for_fl}; continuing download. Result={fl_result}"
-                                )
-                        else:
-                            app.logger.warning(
-                                f"[DOWNLOAD] Auto Freeleech wedge purchase skipped for torrent {torrent_id_for_fl}; not logged into MAM. Continuing download."
-                            )
-                    except Exception as e:
-                        app.logger.warning(
-                            f"[DOWNLOAD] Auto Freeleech wedge purchase errored for torrent {torrent_id_for_fl}; continuing download. Error={e}"
-                        )
+            if should_use_personal_freeleech:
+                app.logger.info(
+                    f"[DOWNLOAD] Auto Freeleech will be requested via download URL for torrent {torrent_id_for_fl}"
+                )
+
+    if should_use_personal_freeleech and torrent_url:
+        torrent_url = append_personal_freeleech_flag(torrent_url)
     
     # Check if download should be blocked due to low buffer
     if app.config.get("BLOCK_DOWNLOAD_ON_LOW_BUFFER", True) and await login_mam():
@@ -4129,7 +4096,11 @@ async def client_add_torrent():
                 }
                 start_monitoring_loop()
 
-                response_data = {'message': result['message'], 'hash': resolved_hash}
+                response_data = {
+                    'message': result['message'],
+                    'hash': resolved_hash,
+                    'personal_freeleech_applied': should_use_personal_freeleech,
+                }
                 if auto_organize_warning:
                     response_data['warning'] = auto_organize_warning
                 return jsonify(response_data)
@@ -4142,7 +4113,10 @@ async def client_add_torrent():
             app.logger.info(f"Added MID {id} to pending_mid_resolutions for hash resolution")
             start_monitoring_loop()
             
-            return jsonify({'message': result['message']})
+            return jsonify({
+                'message': result['message'],
+                'personal_freeleech_applied': should_use_personal_freeleech,
+            })
         else:
             return jsonify({'error': result.get('message', 'Unknown error')}), 400
     
@@ -4187,7 +4161,10 @@ async def client_add_torrent():
             start_monitoring_loop()
             app.logger.info(f"Registered {resolved_hash} for active monitoring.")
 
-        response_data = {'message': result['message']}
+        response_data = {
+            'message': result['message'],
+            'personal_freeleech_applied': should_use_personal_freeleech,
+        }
         if resolved_hash:
             response_data['hash'] = resolved_hash
         if auto_organize_warning: response_data['warning'] = auto_organize_warning

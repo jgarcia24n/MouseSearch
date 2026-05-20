@@ -6160,10 +6160,14 @@ document.addEventListener("DOMContentLoaded", async function () {
         const personal = forcedPersonal || parseInt(data?.personal_freeleech ?? 0) === 1;
         const flVip = parseInt(data?.fl_vip ?? 0) === 1;
         const vipFree = flVip && window.isVipActive === true;
+        const queuedPersonal = data?.use_personal_freeleech === true
+            || String(data?.use_personal_freeleech ?? '').toLowerCase() === 'true'
+            || String(data?.use_personal_freeleech ?? '') === '1';
 
         if (free) return { isFreeleech: true, reason: 'Public Freeleech' };
         if (personal) return { isFreeleech: true, reason: 'Personal Freeleech' };
         if (vipFree) return { isFreeleech: true, reason: 'VIP Freeleech' };
+        if (queuedPersonal) return { isFreeleech: true, reason: 'Freeleech Wedge queued for this download' };
         return { isFreeleech: false, reason: null };
     }
 
@@ -6226,7 +6230,7 @@ document.addEventListener("DOMContentLoaded", async function () {
             }
 
             personalFlBtn.disabled = !!disabledReason;
-            const tooltip = disabledReason || 'Spend one Freeleech Wedge on this torrent';
+            const tooltip = disabledReason || 'Use one Freeleech Wedge when this download starts';
             tooltipTarget.setAttribute('title', tooltip);
             tooltipTarget.setAttribute('data-bs-original-title', tooltip);
             tooltipTarget.setAttribute('data-bs-toggle', 'tooltip');
@@ -6236,33 +6240,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 
     personalFlBtn?.addEventListener('click', function () {
         if (!pendingDownloadData?.id) return;
-        const originalHtml = this.innerHTML;
-        this.disabled = true;
-        this.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-
-        fetch('/mam/buy_personal_fl', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ torrentid: pendingDownloadData.id })
-        })
-            .then(r => r.json())
-            .then(data => {
-                if (data && data.success) {
-                    pendingDownloadData.personal_freeleech = 1;
-                    markTorrentPersonalFreeleech(pendingDownloadData.id);
-                    showToast(`Freeleech Wedge applied. FL left: ${data.FLleft ?? 'N/A'}`, 'success');
-                    loadMamUserData();
-                    updateConfirmModalFreeleechUI();
-                } else {
-                    showToast(data?.error || data?.message || 'Failed to apply Freeleech Wedge', 'danger');
-                }
-            })
-            .catch(() => showToast('Connection error', 'danger'))
-            .finally(() => {
-                this.innerHTML = originalHtml;
-                // Recompute enabled state after completion
-                updateConfirmModalFreeleechUI();
-            });
+        pendingDownloadData.use_personal_freeleech = true;
+        showToast('Freeleech Wedge will be used when this download starts.', 'success');
+        updateConfirmModalFreeleechUI();
     });
 
     if (confirmInput) {
@@ -6729,6 +6709,7 @@ document.addEventListener("DOMContentLoaded", async function () {
             free: button.dataset.free ?? 0,
             personal_freeleech: button.dataset.personalFreeleech ?? 0,
             fl_vip: button.dataset.flVip ?? 0,
+            use_personal_freeleech: false,
         };
 
         // If we've applied a wedge in this session, prefer that state.
@@ -7182,6 +7163,12 @@ document.addEventListener("DOMContentLoaded", async function () {
                     const responseHash = String(data.hash || '').trim().toLowerCase();
                     if (responseHash && downloadData.id) {
                         torrentHashMap[String(downloadData.id)] = responseHash;
+                    }
+
+                    if (data.personal_freeleech_applied && downloadData.id) {
+                        downloadData.personal_freeleech = 1;
+                        markTorrentPersonalFreeleech(downloadData.id);
+                        loadMamUserData();
                     }
 
                     // Find the row
