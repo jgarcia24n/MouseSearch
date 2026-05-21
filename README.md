@@ -24,8 +24,8 @@ MouseSearch is a self-hosted web application that provides a clean, fast search 
     * Auto-purchase when upload buffer (uploaded - downloaded) is too low
     * **[NEW]** Auto-purchase when bonus points exceed a threshold (spends excess points to build buffer)
     * Pre-download buffer check - prevents downloads larger than available buffer and prompts for upload credit purchase
-    * Manual purchase interface with preset amounts, custom multiples of 50 GB (up to 200 GB), or max affordable option (rounded down to the nearest 50 GB)
-* **Freeleech Tools:** VIP Freeleech awareness in search results, a personal Freeleech wedge button in the download confirmation dialog, and an optional setting to auto-attempt wedge purchase before every download add.
+    * Manual purchase interface with preset amounts, custom whole-number GB amounts (`>= 50`), or the upstream max affordable option
+* **Freeleech Tools:** VIP Freeleech awareness in search results, a bonus-store wedge purchase button in the MAM status area, a personal Freeleech wedge button in the download confirmation dialog, and an optional setting to auto-spend an existing wedge on download.
 * **Enhanced Details UI:** Responsive cards, improved book details layout, a high-res cover lightbox, and a **MediaInfo Inspector** tree for viewing technical file metadata.
 * **Live Torrent Polling:** After adding a torrent, the UI polls your torrent client to show its download status (e.g., "Downloading 50%", "Seeding") in real-time in results and the book details modal. Designates previously downloaded torrents as "Downloaded".
 * **Template-Based Organization Paths:** Define a default relative path template (e.g., `{Author}/{Title}` or `{Author}/{Series}/{Title}`) with token helpers and live preview in Settings.
@@ -210,13 +210,13 @@ MouseSearch supports modular torrent clients. Currently supported: **qBittorrent
 | `AUTO_BUY_VIP_INTERVAL_HOURS` | No | Number of hours between automatic VIP purchases (only applies if `AUTO_BUY_VIP` is `true`). Defaults to `24`. |
 | `AUTO_BUY_UPLOAD_ON_RATIO` | No | Set to `true` to enable automatic upload credit purchase when ratio falls below threshold. Defaults to `false`. |
 | `AUTO_BUY_UPLOAD_RATIO_THRESHOLD` | No | If ratio falls below this value, automatically purchase upload credit. MAM requires minimum 1.0 ratio. Defaults to `1.5`. |
-| `AUTO_BUY_UPLOAD_RATIO_AMOUNT` | No | Amount of upload credit (in GB) to purchase when ratio threshold is hit (multiples of 50 only). Defaults to `50`. |
+| `AUTO_BUY_UPLOAD_RATIO_AMOUNT` | No | Amount of upload credit (in GB) to purchase when ratio threshold is hit. Use whole numbers `>= 50`. Defaults to `50`. |
 | `AUTO_BUY_UPLOAD_ON_BUFFER` | No | Set to `true` to enable automatic upload credit purchase when buffer is too low. Defaults to `false`. |
 | `AUTO_BUY_UPLOAD_BUFFER_THRESHOLD` | No | If upload buffer (uploaded - downloaded) falls below this many GB, automatically purchase upload credit. Defaults to `10`. |
-| `AUTO_BUY_UPLOAD_BUFFER_AMOUNT` | No | Amount of upload credit (in GB) to purchase when buffer threshold is hit (multiples of 50 only). Defaults to `50`. |
+| `AUTO_BUY_UPLOAD_BUFFER_AMOUNT` | No | Amount of upload credit (in GB) to purchase when buffer threshold is hit. Use whole numbers `>= 50`. Defaults to `50`. |
 | `AUTO_BUY_UPLOAD_ON_BONUS` | No | Set to `true` to enable automatic upload credit purchase when bonus points exceed a threshold. Defaults to `false`. |
 | `AUTO_BUY_UPLOAD_BONUS_THRESHOLD` | No | If bonus points are at or above this value, auto-purchase upload credit until below threshold. Defaults to `5000`. |
-| `AUTO_BUY_UPLOAD_BONUS_AMOUNT` | No | Amount of upload credit (in GB) to purchase per bonus-threshold check (multiples of 50 only). Defaults to `50`. |
+| `AUTO_BUY_UPLOAD_BONUS_AMOUNT` | No | Amount of upload credit (in GB) to purchase per bonus-threshold check. Use whole numbers `>= 50`. Defaults to `50`. |
 | `AUTO_BUY_UPLOAD_CHECK_INTERVAL_HOURS` | No | Number of hours between ratio/buffer/bonus checks (only applies if auto-buy upload is enabled). Defaults to `6`. |
 | `AUTO_TASK_WEBHOOK_URL` | No | Optional webhook endpoint for auto-task notifications. When set, MouseSearch can notify on supported automatic task success/failure events. |
 | `AUTO_TASK_WEBHOOK_EVENTS` | No | Optional event allowlist for webhook notifications. Accepts a JSON array or comma-separated list such as `["auto_buy_vip"]` or `auto_buy_vip,auto_buy_upload_bonus`. If unset, all supported auto-task webhook events are sent. |
@@ -224,7 +224,7 @@ MouseSearch supports modular torrent clients. Currently supported: **qBittorrent
 | `AUTO_TASK_WEBHOOK_PARAMS` | No | Optional query parameters for the webhook. Accepts either a JSON object or a query-string template such as `source=mousesearch&event={event}&status={status}`. |
 | `AUTO_TASK_WEBHOOK_BODY` | No | Optional POST body template. Accepts JSON or raw text. Ignored for `GET` requests. |
 | `BLOCK_DOWNLOAD_ON_LOW_BUFFER` | No | Set to `true` to prevent downloads when torrent size exceeds available buffer (prompts user to purchase upload credit). Defaults to `true`. |
-| `AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD` | No | Set to `true` to auto-attempt spending a personal Freeleech wedge before each download add. If purchase fails, the torrent is still added. Defaults to `false`. |
+| `AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD` | No | Set to `true` to auto-attempt spending a personal Freeleech wedge you already own before each download add. If the wedge cannot be applied, the torrent is still added. Defaults to `false`. |
 | `AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_ENABLED` | No | Set to `true` to only auto-spend a personal Freeleech wedge when the torrent size is greater than the configured minimum. Defaults to `false`. |
 | `AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_MB` | No | Minimum torrent size, in MB, required before auto-spending a personal Freeleech wedge when the minimum-size gate is enabled. Defaults to `0`. |
 | `HAPTICS_ENABLED` | No | Set to `true` to enable frontend haptic feedback where the browser/device supports it. Defaults to `true`. |

@@ -4,12 +4,6 @@
 <head>
   <script src="{{ url_for('static', filename='bootstrap/js/color-modes.js') }}"></script>
   <script>
-    // Make upload options available globally for validation
-    window.UPLOAD_OPTIONS = {{ UPLOAD_OPTIONS | tojson }};
-    // Create sorted array of valid amounts for easy lookup
-    window.VALID_UPLOAD_AMOUNTS = Object.keys(window.UPLOAD_OPTIONS)
-      .map(k => parseFloat(k))
-      .sort((a, b) => a - b);
     window.LANGUAGE_MAP = {{ LANGUAGE_MAP | tojson }};
     window.DEFAULT_LANGUAGE_ID = {{ DEFAULT_LANGUAGE_ID | tojson }};
     window.DEFAULT_SEARCH_FILTERS = {{ SEARCH_FILTER_DEFAULTS | tojson }};
@@ -273,9 +267,12 @@
                     <strong>Status:</strong> <span id="mam-status" class="text-warning">LOADING</span>
                     <div id="mam-status-message" class="small text-body-secondary mt-1"></div>
                   </div>
-                  <div>
-                    <button type="button" class="btn btn-sm btn-outline-primary me-2" id="buy-vip-button">
+                  <div class="d-flex flex-wrap justify-content-end gap-2">
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="buy-vip-button">
                       <i class="bi bi-star-fill"></i> Top Up VIP
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-warning" id="buy-wedge-button">
+                      <i class="bi bi-ticket-perforated-fill"></i> Buy Wedge
                     </button>
                     <button type="button" class="btn btn-sm btn-outline-success" id="buy-upload-button"
                       data-bs-toggle="modal" data-bs-target="#uploadPurchaseModal">

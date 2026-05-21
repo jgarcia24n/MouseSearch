@@ -665,7 +665,7 @@
                 <i class="me-2 align-content-center text-warning">
                   <span class="icon-cheese settings-menu-icon"></span>
                 </i>
-                Auto-Buy Freeleech Wedge on Download
+                Auto-Use Freeleech Wedge on Download
               </span>
               <div class="form-check form-switch m-0">
                 <input class="form-check-input" type="checkbox" id="AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD"
@@ -676,14 +676,14 @@
             <div id="collapse-personal-fl" class="collapse {% if AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD %}show{% endif %}">
               <div class="card-body border-top pt-2 pb-2">
                 <div class="small text-body-secondary mb-2">
-                  Before each download, MouseSearch attempts to spend one personal Freeleech wedge. If purchase fails,
-                  the download still proceeds.
+                  Before each download, MouseSearch can spend one personal Freeleech wedge that you already own. If a
+                  wedge cannot be applied, the download still proceeds.
                 </div>
 
                 <div class="border rounded p-2 bg-body">
                   <div class="d-flex justify-content-between align-items-center cursor-pointer noselect"
                     onclick="toggleCardSwitch('AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_ENABLED')">
-                    <span class="small fw-semibold">Only buy for torrents above a minimum size</span>
+                    <span class="small fw-semibold">Only spend for torrents above a minimum size</span>
                     <div class="form-check form-switch m-0">
                       <input class="form-check-input" type="checkbox"
                         id="AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_ENABLED"
@@ -742,7 +742,7 @@
                       <div class="col-5">
                         <label class="small text-body-secondary">... then buy</label>
                         <div class="input-group">
-                          <input type="number" min="50" max="200" step="50" class="form-control upload-amount-input"
+                          <input type="number" min="50" step="1" class="form-control upload-amount-input"
                             id="AUTO_BUY_UPLOAD_RATIO_AMOUNT" name="AUTO_BUY_UPLOAD_RATIO_AMOUNT"
                             value="{{ AUTO_BUY_UPLOAD_RATIO_AMOUNT | int }}" placeholder="Buy (GB)">
                           <span class="input-group-text">GB</span>
@@ -782,9 +782,9 @@
                       <div class="col-5">
                         <label class="small text-body-secondary">... then buy</label>
                         <div class="input-group">
-                          <input type="number" min="50" max="200" step="50" class="form-control upload-amount-input"
+                          <input type="number" min="50" step="1" class="form-control upload-amount-input"
                             id="AUTO_BUY_UPLOAD_BUFFER_AMOUNT" name="AUTO_BUY_UPLOAD_BUFFER_AMOUNT"
-                            value="{{ AUTO_BUY_UPLOAD_BUFFER_AMOUNT | int }}" list="upload-amounts-list"
+                            value="{{ AUTO_BUY_UPLOAD_BUFFER_AMOUNT | int }}"
                             placeholder="Buy (GB)">
                           <span class="input-group-text">GB</span>
                         </div>
@@ -824,9 +824,9 @@
                       <div class="col-5">
                         <label class="small text-body-secondary">... then buy</label>
                         <div class="input-group">
-                          <input type="number" min="50" max="200" step="50" class="form-control upload-amount-input"
+                          <input type="number" min="50" step="1" class="form-control upload-amount-input"
                             id="AUTO_BUY_UPLOAD_BONUS_AMOUNT" name="AUTO_BUY_UPLOAD_BONUS_AMOUNT"
-                            value="{{ AUTO_BUY_UPLOAD_BONUS_AMOUNT | int }}" list="upload-amounts-list"
+                            value="{{ AUTO_BUY_UPLOAD_BONUS_AMOUNT | int }}"
                             placeholder="Buy (GB)">
                           <span class="input-group-text">GB</span>
                         </div>
@@ -846,11 +846,6 @@
             <label for="AUTO_BUY_UPLOAD_CHECK_INTERVAL_HOURS" class="small">Check Interval (hours)</label>
           </div>
 
-          <datalist id="upload-amounts-list">
-            {% for amount in UPLOAD_OPTIONS.keys() | sort %}
-            <option value="{{ amount }}"></option>
-            {% endfor %}
-          </datalist>
         </div>
       </div>
 

@@ -118,14 +118,9 @@ const HARDCOVER_STATUS_PLACEHOLDER = Object.freeze({
         <path d="M96 0C60.7 0 32 28.7 32 64v384c0 35.3 28.7 64 64 64h256c35.3 0 64-28.7 64-64V160H288c-17.7 0-32-14.3-32-32V0zm144 0v128h128z" fill="currentColor" opacity="0.25"></path>
         <path d="M256 232c13.3 0 24 10.7 24 24v40h40c13.3 0 24 10.7 24 24s-10.7 24-24 24h-40v40c0 13.3-10.7 24-24 24s-24-10.7-24-24v-40h-40c-13.3 0-24-10.7-24-24s10.7-24 24-24h40v-40c0-13.3 10.7-24 24-24z" fill="currentColor"></path>`,
 });
-const UPLOAD_AMOUNT_STEP = 50;
+const UPLOAD_AMOUNT_STEP = 1;
 const UPLOAD_AMOUNT_MIN = 50;
-const UPLOAD_AMOUNT_MAX = 200;
 const UPLOAD_COST_PER_GB = 500;
-// Validation for upload purchase amounts
-if (!window.VALID_UPLOAD_AMOUNTS || window.VALID_UPLOAD_AMOUNTS.length === 0) {
-    window.VALID_UPLOAD_AMOUNTS = [50, 100, 150, 200];
-}
 
 const HAPTIC_PATTERNS = Object.freeze({
     tap: 15,
@@ -254,8 +249,7 @@ function updateMaxUploadPurchaseDisplay() {
     const maxCost = document.getElementById('upload-max-cost');
     if (!maxButton || !maxAmount || !maxCost) return;
 
-    const maxAffordableRaw = Math.floor(window.currentBonusPoints / UPLOAD_COST_PER_GB / UPLOAD_AMOUNT_MIN) * UPLOAD_AMOUNT_MIN;
-    const maxAffordable = Math.min(maxAffordableRaw, UPLOAD_AMOUNT_MAX);
+    const maxAffordable = Math.floor(window.currentBonusPoints / UPLOAD_COST_PER_GB);
     if (maxAffordable >= UPLOAD_AMOUNT_MIN) {
         maxAmount.textContent = maxAffordable.toLocaleString();
         maxCost.textContent = (maxAffordable * UPLOAD_COST_PER_GB).toLocaleString();
@@ -3779,16 +3773,28 @@ document.addEventListener("DOMContentLoaded", async function () {
         const numValue = parseFloat(value);
         if (isNaN(numValue)) return UPLOAD_AMOUNT_MIN;
         const rounded = Math.round(numValue / UPLOAD_AMOUNT_STEP) * UPLOAD_AMOUNT_STEP;
-        return Math.min(UPLOAD_AMOUNT_MAX, Math.max(UPLOAD_AMOUNT_MIN, rounded));
+        return Math.max(UPLOAD_AMOUNT_MIN, rounded);
     }
+
+    function updateCustomUploadCostInfo() {
+        const input = document.getElementById('custom-upload-amount');
+        const info = document.getElementById('custom-amount-cost-info');
+        if (!input || !info) return;
+
+        const normalized = normalizeUploadAmount(input.value || UPLOAD_AMOUNT_MIN);
+        info.textContent = `${normalized.toLocaleString()} GB costs ${(normalized * UPLOAD_COST_PER_GB).toLocaleString()} BP`;
+    }
+
     document.querySelectorAll('.upload-amount-input').forEach(input => {
         input.addEventListener('blur', function () {
             const valid = normalizeUploadAmount(this.value);
             if (parseFloat(this.value) !== valid) this.value = valid;
+            if (this.id === 'custom-upload-amount') updateCustomUploadCostInfo();
         });
     });
 
     updateMaxUploadPurchaseDisplay();
+    updateCustomUploadCostInfo();
 
     // --- B. Button Handlers (Save, VIP, Upload) ---
 
@@ -3903,6 +3909,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
     // Buy VIP Logic
     const buyVipButton = document.getElementById('buy-vip-button');
+    const buyWedgeButton = document.getElementById('buy-wedge-button');
     const vipModalEl = document.getElementById('vipPurchaseModal');
     const vipModal = vipModalEl ? new bootstrap.Modal(vipModalEl) : null;
     const VIP_COST_PER_WEEK = 1250;
@@ -3950,7 +3957,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                 maxBtn.classList.remove('btn-secondary');
             }
 
-            document.querySelectorAll('.vip-buy-btn[data-duration="4"], .vip-buy-btn[data-duration="8"]').forEach(btn => {
+            document.querySelectorAll('.vip-buy-btn[data-duration]:not([data-duration="max"])').forEach(btn => {
                 const weeks = parseInt(btn.dataset.duration);
                 const cost = weeks * VIP_COST_PER_WEEK;
                 const canAfford = window.currentBonusPoints >= cost;
@@ -4007,36 +4014,108 @@ document.addEventListener("DOMContentLoaded", async function () {
         });
     }
 
+    if (buyWedgeButton) {
+        buyWedgeButton.addEventListener('click', function () {
+            const originalHtml = this.innerHTML;
+            this.disabled = true;
+            this.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Buying...';
+
+            fetch('/mam/buy_wedge', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const purchased = data.amount ? `${data.amount} wedge${String(data.amount) === '1' ? '' : 's'}` : 'a wedge';
+                        const bonusSuffix = data.seedbonus !== undefined ? ` Remaining: ${data.seedbonus} BP` : '';
+                        showToast(`Purchased ${purchased}.${bonusSuffix}`, 'success');
+                        loadMamUserData();
+                    } else {
+                        showToast(data.error || 'Failed to buy wedge', 'danger');
+                    }
+                })
+                .catch(() => showToast('Error purchasing wedge', 'danger'))
+                .finally(() => {
+                    this.disabled = false;
+                    this.innerHTML = originalHtml;
+                });
+        });
+    }
+
     // Buy Upload Handlers
     const uploadAmountOptions = document.getElementById('upload-amount-options');
+    const buyCustomUploadButton = document.getElementById('buy-custom-upload-button');
+    const customUploadAmountInput = document.getElementById('custom-upload-amount');
+
+    function submitUploadPurchase(amount, onBefore, onAfter) {
+        if (typeof onBefore === 'function') onBefore();
+        fetch('/mam/buy_upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ amount })
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const purchasedAmount = data.amount ?? amount;
+                    showToast(`Purchased ${purchasedAmount} GB.`, 'success');
+                    loadMamUserData();
+                    bootstrap.Modal.getInstance(document.getElementById('uploadPurchaseModal'))?.hide();
+                } else {
+                    showToast(data.error || 'Failed', 'danger');
+                }
+            })
+            .catch(() => showToast('Error purchasing upload', 'danger'))
+            .finally(() => {
+                if (typeof onAfter === 'function') onAfter();
+            });
+    }
+
     if (uploadAmountOptions) {
         uploadAmountOptions.addEventListener('click', function (e) {
             const button = e.target.closest('button');
             if (!button) return;
             const amount = button.dataset.amount;
             const buttons = uploadAmountOptions.querySelectorAll('button');
-            buttons.forEach(btn => btn.disabled = true);
             const originalHtml = button.innerHTML;
-            button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Buying...';
-
-            fetch('/mam/buy_upload', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ amount: amount === 'max' ? 'max' : parseFloat(amount) })
-            })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        showToast(`Purchased ${data.amount} GB.`, 'success');
-                        loadMamUserData();
-                        bootstrap.Modal.getInstance(document.getElementById('uploadPurchaseModal'))?.hide();
-                    } else { showToast(data.error || 'Failed', 'danger'); }
-                })
-                .catch(() => showToast('Error purchasing upload', 'danger'))
-                .finally(() => {
+            submitUploadPurchase(
+                amount === 'max' ? 'max' : normalizeUploadAmount(amount),
+                () => {
+                    buttons.forEach(btn => btn.disabled = true);
+                    button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Buying...';
+                },
+                () => {
                     buttons.forEach(btn => btn.disabled = false);
                     button.innerHTML = originalHtml;
-                });
+                }
+            );
+        });
+    }
+
+    if (customUploadAmountInput) {
+        customUploadAmountInput.addEventListener('input', updateCustomUploadCostInfo);
+    }
+
+    if (buyCustomUploadButton && customUploadAmountInput) {
+        buyCustomUploadButton.addEventListener('click', function () {
+            const normalizedAmount = normalizeUploadAmount(customUploadAmountInput.value);
+            customUploadAmountInput.value = normalizedAmount;
+            const originalHtml = this.innerHTML;
+            submitUploadPurchase(
+                normalizedAmount,
+                () => {
+                    this.disabled = true;
+                    customUploadAmountInput.disabled = true;
+                    this.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Buying...';
+                },
+                () => {
+                    this.disabled = false;
+                    customUploadAmountInput.disabled = false;
+                    this.innerHTML = originalHtml;
+                    updateCustomUploadCostInfo();
+                }
+            );
         });
     }
 

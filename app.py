@@ -1026,14 +1026,13 @@ DATA_PATH = Path(os.getenv("DATA_PATH", FALLBACK_CONFIG["DATA_PATH"])).resolve()
 DATA_PATH.mkdir(parents=True, exist_ok=True)
 AUTOSUGGEST_CACHE_DB_PATH = DATA_PATH / "autosuggest_cache.sqlite3"
 
-UPLOAD_OPTIONS_FILE = Path("./static/upload_options.json")
 UPLOAD_CREDIT_COST_PER_GB = 500
 UPLOAD_CREDIT_MIN_GB = 50
-UPLOAD_CREDIT_MAX_GB = 200
-UPLOAD_CREDIT_CHUNK_SIZES = (100, 50)
+UPLOAD_MAX_AFFORDABLE_LITERAL = "Max Affordable "
 VIP_COST_PER_WEEK = 1250
 VIP_MAX_WEEKS = 12.85
 VIP_MIN_WEEKS = 1
+VALID_VIP_DURATIONS = {"4", "8", "12", "max"}
 
 CONFIG_FILE = DATA_PATH / "config.json"
 DATABASE_FILE = DATA_PATH / "database.json"
@@ -1660,6 +1659,16 @@ def load_config():
     ):
         config["AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_MB"] = FALLBACK_CONFIG["AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_MB"]
 
+    for key in [
+        "AUTO_BUY_UPLOAD_RATIO_AMOUNT",
+        "AUTO_BUY_UPLOAD_BUFFER_AMOUNT",
+        "AUTO_BUY_UPLOAD_BONUS_AMOUNT",
+    ]:
+        normalized_amount = normalize_upload_credit_amount(config.get(key))
+        if normalized_amount is None:
+            normalized_amount = FALLBACK_CONFIG[key]
+        config[key] = normalized_amount
+
     # Booleans
     for key in [
         "AUTO_ORGANIZE_ON_ADD",
@@ -1774,50 +1783,66 @@ def initialize_config():
             save_config(existing_config)
             print(f"Generated and saved new QUART_SECRET_KEY to {CONFIG_FILE}.")
 
-initialize_config()
+def parse_int_like(value) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            return None
+        return int(value)
 
-def load_upload_options():
-    if not UPLOAD_OPTIONS_FILE.exists():
-        app.logger.warning("upload_options.json not found.")
-        return {}
-    try:
-        with open(UPLOAD_OPTIONS_FILE, "r") as f:
-            return json.load(f)
-    except Exception as e:
-        app.logger.error(f"Failed to load upload options: {e}")
-        return {}
+    raw = str(value or "").strip()
+    if not raw or not re.fullmatch(r"[+-]?\d+", raw):
+        return None
 
-def build_upload_chunks(amount):
     try:
-        val = float(amount)
+        return int(raw)
     except (ValueError, TypeError):
-        return None, None
+        return None
 
-    if val <= 0:
-        return None, None
 
-    units = round(val / UPLOAD_CREDIT_MIN_GB)
-    if abs(val - (units * UPLOAD_CREDIT_MIN_GB)) > 1e-6:
-        return None, None
+def normalize_upload_credit_amount(value) -> int | None:
+    parsed = parse_int_like(value)
+    if parsed is None or parsed < UPLOAD_CREDIT_MIN_GB:
+        return None
+    return parsed
 
-    total = int(units) * UPLOAD_CREDIT_MIN_GB
-    if total < UPLOAD_CREDIT_MIN_GB:
-        return None, None
-    if total > UPLOAD_CREDIT_MAX_GB:
-        return None, None
 
-    remaining = total
-    chunks = []
-    for chunk in UPLOAD_CREDIT_CHUNK_SIZES:
-        count = remaining // chunk
-        if count:
-            chunks.extend([chunk] * int(count))
-            remaining -= chunk * int(count)
+def coerce_bonus_store_amount(value, default: float | None = None) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
-    if remaining != 0:
-        return None, None
 
-    return total, chunks
+def normalize_bonus_store_error(result) -> str:
+    if isinstance(result, dict):
+        return normalize_spaces(
+            result.get("error")
+            or result.get("message")
+            or json.dumps(result, ensure_ascii=True)
+        )
+    return normalize_spaces(result)
+
+
+async def request_bonus_store(params: dict[str, Any]) -> dict:
+    epoch_ms = int(time.time() * 1000)
+    api_url = f"{app.config.get('MAM_API_URL')}/json/bonusBuy.php/"
+    request_params = dict(params)
+    request_params["_"] = epoch_ms
+    response = await request_mam(
+        "GET",
+        api_url,
+        params=request_params,
+        cookies=mam_session_cookies,
+        timeout=10,
+    )
+    response.raise_for_status()
+    return response.json()
+
+initialize_config()
 
 def calculate_vip_topup_weeks(user_data):
     if not user_data:
@@ -2081,9 +2106,6 @@ async def load_new_app_config():
     app.secret_key = new_config["QUART_SECRET_KEY"]
     app.config.update(new_config)
     reset_mam_proxy_route_state()
-    
-    # Load upload options
-    app.config["UPLOAD_OPTIONS"] = load_upload_options()
     
     # Update path globals
     global ORGANIZED_PATH, LOCAL_TORRENT_DOWNLOAD_PATH, REMOTE_TORRENT_DOWNLOAD_PATH
@@ -2761,17 +2783,10 @@ async def auto_buy_vip():
             return
         
         try:
-            epoch_ms = int(time.time() * 1000)
-            api_url = f"{app.config.get('MAM_API_URL')}/json/bonusBuy.php/"
-            params = {
+            result = await request_bonus_store({
                 'spendtype': 'VIP',
                 'duration': 'max',
-                '_': epoch_ms
-            }
-
-            response = await request_mam("GET", api_url, params=params, cookies=mam_session_cookies, timeout=10)
-            response.raise_for_status()
-            result = response.json()
+            })
 
             if result.get('success'):
                 app.logger.info(f"[AUTO-VIP] Purchase successful - {result.get('amount')} weeks added, Remaining bonus: {result.get('seedbonus')}")
@@ -2839,9 +2854,9 @@ async def check_and_buy_upload():
         current_seedbonus = stats.get('seedbonus')
 
         async def purchase_upload(amount, reason):
-            _, chunks = build_upload_chunks(amount)
-            if not chunks:
-                error = f"Invalid amount: {amount} GB (multiples of {UPLOAD_CREDIT_MIN_GB} only)"
+            normalized_amount = normalize_upload_credit_amount(amount)
+            if normalized_amount is None:
+                error = f"Invalid amount: {amount} GB (whole numbers {UPLOAD_CREDIT_MIN_GB} or higher only)"
                 app.logger.warning(f"[AUTO-UPLOAD-{reason.upper()}] {error}")
                 return {
                     "success": False,
@@ -2851,59 +2866,37 @@ async def check_and_buy_upload():
                     "reason": reason,
                 }
 
-            total_purchased = 0
+            total_purchased = 0.0
             final_seedbonus = None
-            api_url = f"{app.config.get('MAM_API_URL')}/json/bonusBuy.php/"
 
-            for chunk in chunks:
-                try:
-                    if len(chunks) > 1 and chunk != chunks[0]:
-                        await asyncio.sleep(0.5)
+            try:
+                result = await request_bonus_store({
+                    'spendtype': 'upload',
+                    'amount': normalized_amount,
+                })
+            except Exception as e:
+                app.logger.error(f"[AUTO-UPLOAD-{reason.upper()}] Error: {e}")
+                return {
+                    "success": False,
+                    "amount": total_purchased,
+                    "seedbonus": final_seedbonus,
+                    "error": str(e),
+                    "reason": reason,
+                }
 
-                    epoch_ms = int(time.time() * 1000)
-                    params = {'spendtype': 'upload', 'amount': chunk, '_': epoch_ms}
-                    response = await request_mam(
-                        "GET",
-                        api_url,
-                        params=params,
-                        cookies=mam_session_cookies,
-                        timeout=10,
-                    )
-                    response.raise_for_status()
-                    result = response.json()
-
-                    if result.get('success'):
-                        try:
-                            amt_added = result.get('amount')
-                            val = float(amt_added) if str(amt_added).lower() != 'max' else 0
-                            total_purchased += val
-                        except Exception:
-                            pass
-
-                        final_seedbonus = result.get('seedbonus')
-                    else:
-                        error = normalize_spaces(
-                            result.get('error')
-                            or result.get('message')
-                            or json.dumps(result, ensure_ascii=True)
-                        )
-                        app.logger.warning(f"[AUTO-UPLOAD-{reason.upper()}] Purchase failed: {result}")
-                        return {
-                            "success": False,
-                            "amount": total_purchased,
-                            "seedbonus": final_seedbonus,
-                            "error": error,
-                            "reason": reason,
-                        }
-                except Exception as e:
-                    app.logger.error(f"[AUTO-UPLOAD-{reason.upper()}] Error: {e}")
-                    return {
-                        "success": False,
-                        "amount": total_purchased,
-                        "seedbonus": final_seedbonus,
-                        "error": str(e),
-                        "reason": reason,
-                    }
+            if result.get('success'):
+                total_purchased = coerce_bonus_store_amount(result.get('amount'), float(normalized_amount)) or 0.0
+                final_seedbonus = result.get('seedbonus')
+            else:
+                error = normalize_bonus_store_error(result)
+                app.logger.warning(f"[AUTO-UPLOAD-{reason.upper()}] Purchase failed: {result}")
+                return {
+                    "success": False,
+                    "amount": total_purchased,
+                    "seedbonus": final_seedbonus,
+                    "error": error,
+                    "reason": reason,
+                }
 
             if total_purchased <= 0:
                 error = "Purchase failed: no upload credit added"
@@ -3593,10 +3586,15 @@ async def mam_buy_vip():
         return jsonify({'success': False, 'error': 'Not logged into MAM'}), 401
 
     try:
-        # Get JSON data to determine duration
         data = await request.get_json() or {}
-        duration = data.get('duration', 'max') # Default to max if not specified
-        if str(duration).lower() == 'max':
+        duration = normalize_spaces(data.get('duration', 'max')).lower()
+        if duration not in VALID_VIP_DURATIONS:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid duration. Valid options are 4, 8, 12, or max.'
+            }), 400
+
+        if duration == 'max':
             user_data = await fetch_mam_json_load()
             max_weeks = calculate_vip_topup_weeks(user_data)
             if max_weeks < VIP_MIN_WEEKS:
@@ -3604,37 +3602,24 @@ async def mam_buy_vip():
                     'success': False,
                     'error': f"Minimum VIP purchase is {VIP_MIN_WEEKS} week."
                 }), 400
-        else:
-            try:
-                duration_val = float(duration)
-            except (TypeError, ValueError):
-                return jsonify({'success': False, 'error': 'Invalid duration format'}), 400
-            if duration_val < VIP_MIN_WEEKS:
-                return jsonify({
-                    'success': False,
-                    'error': f"Minimum VIP purchase is {VIP_MIN_WEEKS} week."
-                }), 400
-
-        # Get current epoch time in milliseconds for the request
-        epoch_ms = int(time.time() * 1000)
-        api_url = f"{app.config.get('MAM_API_URL')}/json/bonusBuy.php/"
-        params = {
+        result = await request_bonus_store({
             'spendtype': 'VIP',
             'duration': duration,
-            '_': epoch_ms
-        }
+        })
 
-        response = await request_mam("GET", api_url, params=params, cookies=mam_session_cookies, timeout=10)
-        response.raise_for_status()
-        result = response.json()
-
-        # Log the result
         if result.get('success'):
             app.logger.info(f"VIP purchase successful - Duration: {duration}, Amount added: {result.get('amount')} weeks, Remaining bonus: {result.get('seedbonus')}")
+            await push_mam_stats()
         else:
             app.logger.warning(f"VIP purchase failed: {result}")
 
-        return jsonify(result)
+        if result.get('success'):
+            return jsonify(result)
+        return jsonify({
+            **result,
+            'success': False,
+            'error': normalize_bonus_store_error(result),
+        }), 400
     except Exception as e:
         app.logger.error(f"Error buying VIP credit: {e}")
         return jsonify({'success': False, 'error': 'Failed to purchase VIP'}), 503
@@ -3642,126 +3627,73 @@ async def mam_buy_vip():
 @app.route('/mam/buy_upload', methods=['POST'])
 async def mam_buy_upload():
     """
-    Buy upload credit using 50/100 GB chunks.
-    Accepts 'max' (computed from bonus points) or a specific multiple of 50 GB.
+    Buy upload credit using the MAM bonus store.
+    Accepts 'max' or a specific whole number of GB >= 50.
     """
     if not await login_mam():
         return jsonify({'success': False, 'error': 'Not logged into MAM'}), 401
     
     data = await request.get_json() or {}
     raw_amount = data.get('amount')
-
-    # 1. Handle 'max' special case
-    if str(raw_amount).lower() == 'max':
-        stats = await get_user_stats()
-        if not stats:
-            return jsonify({'success': False, 'error': 'Could not fetch user stats'}), 503
-        seedbonus = stats.get('seedbonus')
-        if seedbonus is None:
-            return jsonify({'success': False, 'error': 'Could not read bonus points'}), 503
-
-        affordable_gb = math.floor(seedbonus / UPLOAD_CREDIT_COST_PER_GB)
-        affordable_gb -= affordable_gb % UPLOAD_CREDIT_MIN_GB
-        affordable_gb = min(affordable_gb, UPLOAD_CREDIT_MAX_GB)
-        if affordable_gb < UPLOAD_CREDIT_MIN_GB:
-            return jsonify({
-                'success': False,
-                'error': f'Insufficient bonus points to purchase {UPLOAD_CREDIT_MIN_GB} GB.'
-            }), 400
-
-        total, chunks = build_upload_chunks(affordable_gb)
-        if not chunks:
-            return jsonify({'success': False, 'error': 'Failed to calculate max affordable amount'}), 400
-
-        app.logger.info(f"Processing 'max' upload purchase for {total} GB using chunks: {chunks}")
-
-    # 2. Handle numeric amounts
-    else:
-        total, chunks = build_upload_chunks(raw_amount)
-        if not chunks:
-            return jsonify({
-                'success': False,
-                'error': f'Invalid amount: {raw_amount} GB. Valid amounts are multiples of {UPLOAD_CREDIT_MIN_GB} GB, up to {UPLOAD_CREDIT_MAX_GB} GB.'
-            }), 400
-
-        app.logger.info(f"Processing purchase for {total} GB using chunks: {chunks}")
-
-    # 3. Execute the requests
-    total_purchased = 0
-    final_seedbonus = 0
-    errors = []
-    api_url = f"{app.config.get('MAM_API_URL')}/json/bonusBuy.php/"
-
-    for chunk in chunks:
-        try:
-            # Rate limit safety sleep between multi-chunk requests
-            if len(chunks) > 1 and chunk != chunks[0]:
-                await asyncio.sleep(0.5)
-
-            epoch_ms = int(time.time() * 1000)
-            params = {
-                'spendtype': 'upload',
-                'amount': chunk,
-                '_': epoch_ms
-            }
-
-            response = await request_mam("GET", api_url, params=params, cookies=mam_session_cookies, timeout=10)
-            response.raise_for_status()
-            result = response.json()
-
-            if result.get('success'):
-                amt_added = result.get('amount')
-                # Handle 'max' return or numeric return
-                try:
-                    val = float(amt_added) if str(amt_added).lower() != 'max' else 0
-                    total_purchased += val
-                except:
-                    pass
-
-                final_seedbonus = result.get('seedbonus')
-                app.logger.info(f"[BUY-UPLOAD] Chunk {chunk} success.")
-            else:
-                msg = result.get('error') or result.get('message') or 'Unknown error'
-                app.logger.warning(f"[BUY-UPLOAD] Chunk {chunk} failed: {msg}")
-                errors.append(f"Failed on {chunk}: {msg}")
-                break # Stop on first failure
-
-        except Exception as e:
-            app.logger.error(f"[BUY-UPLOAD] Exception on chunk {chunk}: {e}")
-            errors.append(f"Error on {chunk}: {str(e)}")
-            break
-
-    # 4. Return result
-    success = len(errors) == 0
-    
-    if total_purchased > 0:
-        await push_mam_stats()
-        
-        msg = f"Purchased {total_purchased} GB successfully."
-        
-        if errors:
-            msg += f" (Stopped early: {', '.join(errors)})"
-            
+    use_max = str(raw_amount).strip().lower() == 'max'
+    normalized_amount = None if use_max else normalize_upload_credit_amount(raw_amount)
+    if not use_max and normalized_amount is None:
         return jsonify({
-            'success': success,
-            'amount': total_purchased,
-            'seedbonus': final_seedbonus,
-            'message': msg
-        })
-    else:
-        return jsonify({
-            'success': False, 
-            'error': '; '.join(errors) if errors else "Purchase failed."
+            'success': False,
+            'error': f'Invalid amount: {raw_amount}. Use a whole number of GB that is {UPLOAD_CREDIT_MIN_GB} or higher, or max.'
         }), 400
 
+    try:
+        result = await request_bonus_store({
+            'spendtype': 'upload',
+            'amount': UPLOAD_MAX_AFFORDABLE_LITERAL if use_max else normalized_amount,
+        })
+    except Exception as e:
+        app.logger.error(f"[BUY-UPLOAD] Exception: {e}")
+        return jsonify({'success': False, 'error': 'Failed to purchase upload credit'}), 503
 
-@app.route('/mam/buy_personal_fl', methods=['POST'])
-async def mam_buy_personal_fl():
-    """Deprecated: MAM no longer allows spending wedges through the API."""
+    if result.get('success'):
+        app.logger.info(f"[BUY-UPLOAD] Success: {result}")
+        await push_mam_stats()
+        if result.get('amount') in (None, "") and normalized_amount is not None:
+            result['amount'] = normalized_amount
+        return jsonify(result)
+
+    error = normalize_bonus_store_error(result)
+    app.logger.warning(f"[BUY-UPLOAD] Purchase failed: {result}")
     return jsonify({
+        **result,
         'success': False,
-        'error': 'Direct Freeleech wedge purchases via the MAM API are no longer supported. Start the download with the fl query flag instead.'
-    }), 410
+        'error': error,
+    }), 400
+
+
+@app.route('/mam/buy_wedge', methods=['POST'])
+async def mam_buy_wedge():
+    """Buy a personal Freeleech wedge using bonus points."""
+    if not await login_mam():
+        return jsonify({'success': False, 'error': 'Not logged into MAM'}), 401
+
+    try:
+        result = await request_bonus_store({
+            'spendtype': 'wedges',
+            'source': 'points',
+        })
+    except Exception as e:
+        app.logger.error(f"Error buying wedge: {e}")
+        return jsonify({'success': False, 'error': 'Failed to purchase wedge'}), 503
+
+    if result.get('success'):
+        app.logger.info(f"Wedge purchase successful - Remaining bonus: {result.get('seedbonus')}")
+        await push_mam_stats()
+        return jsonify(result)
+
+    app.logger.warning(f"Wedge purchase failed: {result}")
+    return jsonify({
+        **result,
+        'success': False,
+        'error': normalize_bonus_store_error(result),
+    }), 400
         
 
 # Helper function to clean the specific MAM JSON format
@@ -4307,12 +4239,10 @@ async def client_add_torrent():
                 needed_gb = torrent_size_gb - buffer_gb
                 cost_per_gb = UPLOAD_CREDIT_COST_PER_GB  # bonus points
                 
-                # Round up to the nearest 50 GB, with a 50 GB minimum
                 recommended_amount = max(
                     UPLOAD_CREDIT_MIN_GB,
-                    math.ceil(needed_gb / UPLOAD_CREDIT_MIN_GB) * UPLOAD_CREDIT_MIN_GB
+                    math.ceil(needed_gb)
                 )
-                recommended_amount = min(recommended_amount, UPLOAD_CREDIT_MAX_GB)
                 
                 return jsonify({
                     'status': 'insufficient_buffer',
