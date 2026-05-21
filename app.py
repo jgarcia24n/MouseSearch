@@ -18,7 +18,7 @@ import ipaddress
 from difflib import SequenceMatcher
 from typing import Any
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv, dotenv_values
 from httpx import Limits, Timeout, AsyncHTTPTransport
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -706,12 +706,17 @@ async def startup():
         scheduler.add_job(check_and_buy_upload, 'date', run_date=datetime.now() + timedelta(seconds=15), id='initial_upload_check_job')
 
     if app.config.get("ENABLE_DYNAMIC_IP_UPDATE") and not uses_mousehole_mam_cookie():
-        interval_hours = int(app.config.get("DYNAMIC_IP_UPDATE_INTERVAL_HOURS", 3))
-        misfire_grace_seconds = max(1, int(interval_hours * 3600 * 0.8))
+        interval_seconds = int(
+            app.config.get(
+                "DYNAMIC_IP_CHECK_INTERVAL_SECONDS",
+                FALLBACK_CONFIG["DYNAMIC_IP_CHECK_INTERVAL_SECONDS"],
+            )
+        )
+        misfire_grace_seconds = max(1, int(interval_seconds * 0.8))
         scheduler.add_job(
             check_and_update_ip,
             'interval',
-            hours=interval_hours,
+            seconds=interval_seconds,
             id='ip_check_job',
             replace_existing=True,
             misfire_grace_time=misfire_grace_seconds,
@@ -980,6 +985,8 @@ FALLBACK_CONFIG = {
     "AUTO_ORGANIZE_USE_COPY": False,
     "HAPTICS_ENABLED": True,
     "ENABLE_DYNAMIC_IP_UPDATE": False,
+    "DYNAMIC_IP_CHECK_INTERVAL_SECONDS": 300,
+    "DYNAMIC_IP_STALE_RESPONSE_SECONDS": 86400,
     "DYNAMIC_IP_UPDATE_INTERVAL_HOURS": 3,
     "AUTO_BUY_VIP": False,
     "AUTO_BUY_VIP_INTERVAL_HOURS": 24,
@@ -1373,6 +1380,44 @@ def normalize_mam_cookie_value(value) -> str:
     return raw
 
 
+async def sync_mam_session_cookie_from_response(response: httpx.Response | None) -> bool:
+    global mam_session_cookies
+
+    if response is None:
+        return False
+
+    response_cookies = dict(response.cookies)
+    if not response_cookies:
+        return False
+
+    async with mam_session_cookie_lock:
+        current_cookie = normalize_mam_cookie_value(mam_session_cookies.get("mam_id"))
+        mam_session_cookies.update(response_cookies)
+
+        rotated_cookie = normalize_mam_cookie_value(response_cookies.get("mam_id"))
+        if not rotated_cookie:
+            return False
+
+        changed = rotated_cookie != current_cookie
+        mam_session_cookies["mam_id"] = rotated_cookie
+
+        if not changed:
+            return changed
+
+        display_cookie = format_cookie_for_display(rotated_cookie)
+        if uses_mousehole_mam_cookie():
+            app.logger.info("[MAM-COOKIE] Rotated session cookie from API response: %s", display_cookie)
+            return changed
+
+        if app.config.get("MAM_ID") != rotated_cookie:
+            app.config["MAM_ID"] = rotated_cookie
+            save_config(app.config)
+            app.logger.info("[MAM-COOKIE] Persisted rotated session cookie from API response: %s", display_cookie)
+        else:
+            app.logger.info("[MAM-COOKIE] Refreshed in-memory session cookie from API response: %s", display_cookie)
+        return True
+
+
 def normalize_proxy_url(value) -> str:
     raw = str(value or "").strip()
     if not raw:
@@ -1547,6 +1592,8 @@ def load_config():
     # Integers
     for key in [
         "AUTO_ORGANIZE_INTERVAL_HOURS", 
+        "DYNAMIC_IP_CHECK_INTERVAL_SECONDS",
+        "DYNAMIC_IP_STALE_RESPONSE_SECONDS",
         "DYNAMIC_IP_UPDATE_INTERVAL_HOURS",
         "AUTO_BUY_VIP_INTERVAL_HOURS",
         "AUTO_BUY_UPLOAD_CHECK_INTERVAL_HOURS",
@@ -1561,11 +1608,29 @@ def load_config():
             config[key] = int(config[key])
         except (ValueError, TypeError):
             config[key] = FALLBACK_CONFIG[key]
+
+    has_dynamic_check_interval = (
+        "DYNAMIC_IP_CHECK_INTERVAL_SECONDS" in env_config
+        or "DYNAMIC_IP_CHECK_INTERVAL_SECONDS" in json_overrides
+    )
+    has_legacy_dynamic_interval = (
+        "DYNAMIC_IP_UPDATE_INTERVAL_HOURS" in env_config
+        or "DYNAMIC_IP_UPDATE_INTERVAL_HOURS" in json_overrides
+    )
+    if not has_dynamic_check_interval and has_legacy_dynamic_interval:
+        config["DYNAMIC_IP_CHECK_INTERVAL_SECONDS"] = max(
+            1,
+            int(config["DYNAMIC_IP_UPDATE_INTERVAL_HOURS"]) * 3600,
+        )
     
     if config["MAX_SEARCH_RESULTS"] <= 0:
         config["MAX_SEARCH_RESULTS"] = FALLBACK_CONFIG["MAX_SEARCH_RESULTS"]
     if config["MAX_AUTOCOMPLETE_RESULTS"] <= 0:
         config["MAX_AUTOCOMPLETE_RESULTS"] = FALLBACK_CONFIG["MAX_AUTOCOMPLETE_RESULTS"]
+    if config["DYNAMIC_IP_CHECK_INTERVAL_SECONDS"] <= 0:
+        config["DYNAMIC_IP_CHECK_INTERVAL_SECONDS"] = FALLBACK_CONFIG["DYNAMIC_IP_CHECK_INTERVAL_SECONDS"]
+    if config["DYNAMIC_IP_STALE_RESPONSE_SECONDS"] <= 0:
+        config["DYNAMIC_IP_STALE_RESPONSE_SECONDS"] = FALLBACK_CONFIG["DYNAMIC_IP_STALE_RESPONSE_SECONDS"]
     if config["HARDCOVER_RATE_LIMIT"] <= 0:
         config["HARDCOVER_RATE_LIMIT"] = FALLBACK_CONFIG["HARDCOVER_RATE_LIMIT"]
     if config["HARDCOVER_CONCURRENCY"] <= 0:
@@ -2330,25 +2395,201 @@ async def monitor_downloads_loop():
 
 # --- IP STATE MANAGEMENT ---
 
-def load_ip_state():
+def load_dynamic_ip_state() -> dict:
     if os.path.exists(IP_STATE_FILE):
         try:
             with open(IP_STATE_FILE, "r") as f:
-                return json.load(f).get("last_ip")
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
         except (json.JSONDecodeError, FileNotFoundError):
             pass
+    return {}
+
+
+def save_dynamic_ip_state(state: dict):
+    with open(IP_STATE_FILE, "w") as f:
+        json.dump(state, f, indent=4)
+
+
+def invalidate_dynamic_ip_state(reason: str):
+    try:
+        if IP_STATE_FILE.exists():
+            IP_STATE_FILE.unlink()
+        app.logger.info("Invalidated dynamic IP state: %s", reason)
+    except FileNotFoundError:
+        app.logger.info("Dynamic IP state already absent while invalidating: %s", reason)
+    except Exception as exc:
+        app.logger.warning("Failed to invalidate dynamic IP state (%s): %s", reason, exc)
+
+
+def parse_dynamic_ip_state_datetime(value) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def normalize_dynamic_ip_host_info(host_info: dict | None) -> dict:
+    payload = host_info if isinstance(host_info, dict) else {}
+    asn_value = payload.get("asn")
+    try:
+        asn = int(asn_value) if asn_value not in (None, "") else None
+    except (TypeError, ValueError):
+        asn = None
+    return {
+        "ip": str(payload.get("ip") or "").strip(),
+        "asn": asn,
+        "as": str(payload.get("as") or "").strip(),
+    }
+
+
+def build_dynamic_ip_state(
+    host_info: dict | None,
+    last_mam: dict | None,
+    *,
+    mam_updated: bool,
+    update_reason: str | None,
+) -> dict:
+    return {
+        "version": 2,
+        "host": normalize_dynamic_ip_host_info(host_info),
+        "last_mam": last_mam,
+        "last_update": {
+            "at": datetime.now(timezone.utc).isoformat(),
+            "mam_updated": bool(mam_updated),
+            "mam_update_reason": update_reason,
+        },
+    }
+
+
+def get_dynamic_ip_state_last_ip(state: dict) -> str | None:
+    if not isinstance(state, dict):
+        return None
+
+    last_mam = state.get("last_mam")
+    if isinstance(last_mam, dict):
+        response = last_mam.get("response")
+        if isinstance(response, dict):
+            body = response.get("body")
+            if isinstance(body, dict):
+                value = str(body.get("ip") or "").strip()
+                if value:
+                    return value
+
+    legacy_value = str(state.get("last_ip") or "").strip()
+    return legacy_value or None
+
+
+def get_dynamic_ip_update_reason(state: dict, host_info: dict) -> str | None:
+    last_mam = state.get("last_mam") if isinstance(state, dict) else None
+    if not isinstance(last_mam, dict):
+        return "no-last-response"
+
+    response = last_mam.get("response")
+    if not isinstance(response, dict):
+        return "no-last-response"
+
+    status_code = response.get("http_status")
+    if status_code != 200:
+        return "last-response-error"
+
+    body = response.get("body")
+    if not isinstance(body, dict):
+        return "last-response-error"
+
+    if host_info.get("ip") != str(body.get("ip") or "").strip():
+        return "ip-changed"
+
+    try:
+        last_asn = int(body.get("ASN")) if body.get("ASN") not in (None, "") else None
+    except (TypeError, ValueError):
+        last_asn = None
+    if host_info.get("asn") != last_asn:
+        return "asn-changed"
+
+    request_info = last_mam.get("request")
+    request_at = parse_dynamic_ip_state_datetime(request_info.get("at") if isinstance(request_info, dict) else None)
+    if request_at is None:
+        return "response-stale"
+
+    stale_seconds = int(
+        app.config.get(
+            "DYNAMIC_IP_STALE_RESPONSE_SECONDS",
+            FALLBACK_CONFIG["DYNAMIC_IP_STALE_RESPONSE_SECONDS"],
+        )
+    )
+    if request_at + timedelta(seconds=stale_seconds) <= datetime.now(timezone.utc):
+        return "response-stale"
+
     return None
 
-def save_ip_state(ip):
-    with open(IP_STATE_FILE, "w") as f:
-        json.dump({"last_ip": ip}, f, indent=4)
 
-async def force_update_ip(notify_event=False, previous_ip=None, detected_ip=None):
+async def fetch_current_dynamic_ip_host_info() -> dict:
+    ip_check_url = f"{app.config.get('MAM_API_URL')}/json/jsonIp.php"
+    response = await request_with_optional_proxy(
+        "GET",
+        ip_check_url,
+        track_proxy_status=True,
+        headers={"Accept": "application/json"},
+        timeout=10,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError(f"jsonIp response was not a JSON object: {type(payload).__name__}")
+
+    current_ip = str(payload.get("ip") or "").strip()
+    current_as = str(payload.get("AS") or "").strip()
+    try:
+        current_asn = int(payload.get("ASN")) if payload.get("ASN") not in (None, "") else None
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid ASN in jsonIp response: {payload.get('ASN')}") from exc
+
+    if not current_ip or current_asn is None:
+        raise ValueError("jsonIp response did not include both ip and ASN")
+
+    return {
+        "ip": current_ip,
+        "asn": current_asn,
+        "as": current_as,
+    }
+
+
+async def force_update_ip(
+    notify_event=False,
+    previous_ip=None,
+    detected_ip=None,
+    update_reason: str = "forced",
+    host_info: dict | None = None,
+):
     async with app.app_context():
-        app.logger.info("Forcing manual IP update for dynamic seedbox.")
+        app.logger.info("Updating dynamic seedbox because: %s", update_reason)
         if uses_mousehole_mam_cookie():
             app.logger.info("Skipping MouseSearch IP update because Mousehole cookie mode is enabled.")
             return
+
+        state = load_dynamic_ip_state()
+        if previous_ip is None:
+            previous_ip = get_dynamic_ip_state_last_ip(state)
+
+        normalized_host_info = normalize_dynamic_ip_host_info(host_info)
+        if not normalized_host_info.get("ip"):
+            try:
+                normalized_host_info = await fetch_current_dynamic_ip_host_info()
+            except Exception as exc:
+                app.logger.warning("Could not fetch current host info before dynamic seedbox update: %s", exc)
+                normalized_host_info = normalize_dynamic_ip_host_info({
+                    "ip": detected_ip or previous_ip or "",
+                    "asn": None,
+                    "as": "",
+                })
 
         if not await ensure_mam_session_cookie():
             if notify_event:
@@ -2365,10 +2606,44 @@ async def force_update_ip(notify_event=False, previous_ip=None, detected_ip=None
         try:
             update_url = "https://t.myanonamouse.net/json/dynamicSeedbox.php"
             update_response = await request_mam("GET", update_url, cookies=api_cookies, timeout=15)
-            update_response.raise_for_status()
-            update_data = update_response.json()
-            if new_ip := update_data.get("ip"):
-                save_ip_state(new_ip)
+            await sync_mam_session_cookie_from_response(update_response)
+            try:
+                update_data = update_response.json()
+            except ValueError as exc:
+                update_data = {
+                    "Success": False,
+                    "msg": f"Invalid JSON response: {exc}",
+                }
+            if not isinstance(update_data, dict):
+                update_data = {
+                    "Success": False,
+                    "msg": f"Unexpected JSON payload: {type(update_data).__name__}",
+                }
+
+            mam_record = {
+                "request": {
+                    "at": datetime.now(timezone.utc).isoformat(),
+                },
+                "response": {
+                    "http_status": update_response.status_code,
+                    "body": update_data,
+                },
+            }
+            save_dynamic_ip_state(
+                build_dynamic_ip_state(
+                    normalized_host_info,
+                    mam_record,
+                    mam_updated=True,
+                    update_reason=update_reason,
+                )
+            )
+
+            detected_ip = detected_ip or normalized_host_info.get("ip")
+            update_message = normalize_spaces(update_data.get("msg") or f"HTTP {update_response.status_code}")
+            new_ip = str(update_data.get("ip") or "").strip()
+
+            if update_response.status_code == 200 and new_ip:
+                app.logger.info("Dynamic seedbox update completed.")
                 if notify_event:
                     await send_auto_task_webhook_notification(
                         "auto_update_ip",
@@ -2378,14 +2653,21 @@ async def force_update_ip(notify_event=False, previous_ip=None, detected_ip=None
                         detected_ip=detected_ip,
                         updated_ip=new_ip,
                     )
-            elif notify_event:
+                return
+
+            app.logger.error(
+                "Error calling dynamic seedbox update: HTTP %s - %s",
+                update_response.status_code,
+                update_message,
+            )
+            if notify_event:
                 await send_auto_task_webhook_notification(
                     "auto_update_ip",
                     False,
                     task="dynamic_ip_update",
                     previous_ip=previous_ip,
                     detected_ip=detected_ip,
-                    error="Update endpoint did not return an IP address",
+                    error=update_message,
                 )
         except Exception as e:
             app.logger.error(f"Error calling dynamic seedbox update: {e}")
@@ -2405,34 +2687,38 @@ async def check_and_update_ip():
             app.logger.info("Skipping MouseSearch IP check because Mousehole cookie mode is enabled.")
             return
 
-        if not await ensure_mam_session_cookie():
-            await send_auto_task_webhook_notification(
-                "auto_update_ip",
-                False,
-                task="dynamic_ip_update",
-                error="MAM cookie is not configured",
-            )
-            return
-        api_cookies = dict(mam_session_cookies)
         try:
-            ip_check_url = f"{app.config.get('MAM_API_URL')}/json/jsonIp.php"
-            response = await request_mam("GET", ip_check_url, cookies=api_cookies, timeout=10)
-            response.raise_for_status()
-            current_ip = response.json().get("ip")
-            if not current_ip:
-                return
+            host_info = await fetch_current_dynamic_ip_host_info()
         except Exception as e:
             await send_auto_task_webhook_notification(
                 "auto_update_ip",
                 False,
                 task="dynamic_ip_update",
-                error=f"Could not fetch current IP: {e}",
+                error=f"Could not fetch current host info: {e}",
             )
             return
-            
-        last_ip = load_ip_state()
-        if current_ip != last_ip:
-            await force_update_ip(notify_event=True, previous_ip=last_ip, detected_ip=current_ip)
+
+        state = load_dynamic_ip_state()
+        update_reason = get_dynamic_ip_update_reason(state, host_info)
+        if not update_reason:
+            app.logger.info("No dynamic MAM update needed; current state is ok.")
+            save_dynamic_ip_state(
+                build_dynamic_ip_state(
+                    host_info,
+                    state.get("last_mam") if isinstance(state, dict) else None,
+                    mam_updated=False,
+                    update_reason=None,
+                )
+            )
+            return
+
+        await force_update_ip(
+            notify_event=True,
+            previous_ip=get_dynamic_ip_state_last_ip(state),
+            detected_ip=host_info.get("ip"),
+            update_reason=update_reason,
+            host_info=host_info,
+        )
 
 
 # --- VIP AUTO-BUY SCHEDULER ---
@@ -2484,7 +2770,6 @@ async def auto_buy_vip():
             }
 
             response = await request_mam("GET", api_url, params=params, cookies=mam_session_cookies, timeout=10)
-            update_cookies(response)
             response.raise_for_status()
             result = response.json()
 
@@ -2584,7 +2869,6 @@ async def check_and_buy_upload():
                         cookies=mam_session_cookies,
                         timeout=10,
                     )
-                    update_cookies(response)
                     response.raise_for_status()
                     result = response.json()
 
@@ -2850,12 +3134,6 @@ def format_cookie_for_display(cookie_value: str | None) -> str:
         return "Not synced"
     return value
 
-
-def update_cookies(response):
-    global mam_session_cookies
-    if "set-cookie" in response.headers:
-        cookies = dict(response.cookies)
-        mam_session_cookies.update(cookies)
 
 async def login_mam():
     """Checks if the MAM session is valid by attempting to load user data."""
@@ -3132,7 +3410,6 @@ async def mam_autosuggest():
         for query_text in query_candidates:
             params["tor[text]"] = query_text
             resp = await request_mam("GET", url, params=params, cookies=mam_session_cookies, timeout=5.0)
-            update_cookies(resp)
             if resp.status_code != 200:
                 continue
             data = resp.json()
@@ -3289,12 +3566,14 @@ async def sync_mousehole_cookie():
 async def mam_user_data():
     result = await fetch_mam_json_load_result()
     user_data = result["data"]
+    current_cookie_display = format_cookie_for_display(mam_session_cookies.get("mam_id"))
     
     if not user_data:
         status_code = result["status_code"] if result["status_code"] is not None else 401
         return jsonify({
             'error': result["message"] or 'Not logged into MAM or failed to fetch data',
             'message': result["message"] or 'Not logged into MAM or failed to fetch data',
+            'current_mam_cookie': current_cookie_display,
             'proxy_status': build_mam_proxy_status_payload(),
         }), status_code
         
@@ -3302,6 +3581,7 @@ async def mam_user_data():
         user_data["seedbonus_formatted"] = f"{seedbonus:,}"
 
     user_data["message"] = "MyAnonaMouse is connected."
+    user_data["current_mam_cookie"] = current_cookie_display
     user_data["proxy_status"] = build_mam_proxy_status_payload()
         
     return jsonify(user_data)
@@ -3345,7 +3625,6 @@ async def mam_buy_vip():
         }
 
         response = await request_mam("GET", api_url, params=params, cookies=mam_session_cookies, timeout=10)
-        update_cookies(response)
         response.raise_for_status()
         result = response.json()
 
@@ -3427,7 +3706,6 @@ async def mam_buy_upload():
             }
 
             response = await request_mam("GET", api_url, params=params, cookies=mam_session_cookies, timeout=10)
-            update_cookies(response)
             response.raise_for_status()
             result = response.json()
 
@@ -3560,7 +3838,6 @@ async def fetch_mam_json_load_result():
     api_url = f"{url}/jsonLoad.php"
     try:
         response = await request_mam("GET", api_url, cookies=mam_session_cookies, timeout=10)
-        update_cookies(response)
         response.raise_for_status()
         data = response.json()
         return {"data": data, "message": "MyAnonaMouse is connected.", "status_code": response.status_code}
@@ -3687,7 +3964,6 @@ async def fetch_torrent_file_from_mam(torrent_url: str) -> tuple[bytes | None, s
 
     try:
         response = await request_mam("GET", torrent_url, cookies=mam_session_cookies, timeout=15.0)
-        update_cookies(response)
         response.raise_for_status()
 
         torrent_bytes = response.content
@@ -5088,7 +5364,6 @@ async def mam_search():
             params=params,
             headers=headers,
         )
-        update_cookies(response)
         response.raise_for_status()
         json_data = response.json()
         results = json_data.get("data", [])
@@ -5472,7 +5747,6 @@ async def proxy_thumbnail():
                 cookies=mam_session_cookies,
                 follow_redirects=False,
             )
-            update_cookies(r)
             
             if r.status_code in (301, 302, 303, 307, 308):
                 await r.aclose() # Close the stream for the redirect response
@@ -5557,6 +5831,8 @@ async def api_settings():
 async def update_settings():
     form = await request.form
     config_to_update = app.config.copy()
+    previous_use_mousehole_cookie = bool(app.config.get("USE_MOUSEHOLE_MAM_COOKIE"))
+    previous_mam_id = normalize_mam_cookie_value(app.config.get("MAM_ID"))
     boolean_fields = {
         "AUTO_ORGANIZE_ON_ADD",
         "AUTO_ORGANIZE_ON_SCHEDULE",
@@ -5623,22 +5899,36 @@ async def update_settings():
     )
 
     if form.get("TORRENT_CLIENT_PASSWORD"): config_to_update["TORRENT_CLIENT_PASSWORD"] = form.get("TORRENT_CLIENT_PASSWORD")
+    next_use_mousehole_cookie = coerce_bool(
+        config_to_update.get("USE_MOUSEHOLE_MAM_COOKIE"),
+        FALLBACK_CONFIG["USE_MOUSEHOLE_MAM_COOKIE"],
+    )
+    next_mam_id = normalize_mam_cookie_value(config_to_update.get("MAM_ID"))
+    if next_use_mousehole_cookie != previous_use_mousehole_cookie:
+        invalidate_dynamic_ip_state("MAM auth mode changed")
+    elif not next_use_mousehole_cookie and next_mam_id != previous_mam_id:
+        invalidate_dynamic_ip_state("Direct MAM session cookie changed")
     save_config(config_to_update)
     await load_new_app_config()
     if app.config.get("ENABLE_DYNAMIC_IP_UPDATE") and not uses_mousehole_mam_cookie():
-        interval_hours = int(app.config.get("DYNAMIC_IP_UPDATE_INTERVAL_HOURS", 3))
-        misfire_grace_seconds = max(1, int(interval_hours * 3600 * 0.8))
+        interval_seconds = int(
+            app.config.get(
+                "DYNAMIC_IP_CHECK_INTERVAL_SECONDS",
+                FALLBACK_CONFIG["DYNAMIC_IP_CHECK_INTERVAL_SECONDS"],
+            )
+        )
+        misfire_grace_seconds = max(1, int(interval_seconds * 0.8))
         scheduler.add_job(
             check_and_update_ip,
             'interval',
-            hours=interval_hours,
+            seconds=interval_seconds,
             id='ip_check_job',
             replace_existing=True,
             misfire_grace_time=misfire_grace_seconds,
         )
         scheduler.add_job(
             id='manual_ip_update_job',
-            func=force_update_ip,
+            func=check_and_update_ip,
             trigger='date',
             run_date=datetime.now() + timedelta(seconds=2),
             replace_existing=True,

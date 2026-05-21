@@ -273,7 +273,7 @@ function updateMaxUploadPurchaseDisplay() {
  */
 window.toggleCardSwitch = function (checkboxId) {
     const checkbox = document.getElementById(checkboxId);
-    if (checkbox) {
+    if (checkbox && checkbox.dataset.locked !== 'true') {
         triggerHaptic('accordion');
         checkbox.click();
     }
@@ -2449,12 +2449,17 @@ function loadMamUserData() {
             const statusSpan = document.getElementById('mam-status');
             const statusMessage = document.getElementById('mam-status-message');
             const statusIconSpan = document.getElementById('mam-status-icon');
+            const mamIdField = document.getElementById('MAM_ID');
             if (statusSpan) { statusSpan.textContent = 'CONNECTED'; statusSpan.className = 'text-success'; }
             if (statusMessage) {
                 statusMessage.textContent = String(data.message || 'MyAnonaMouse is connected.');
                 statusMessage.className = 'small text-success-emphasis mt-1';
             }
             if (statusIconSpan) statusIconSpan.innerHTML = greenCheckIcon;
+            if (mamIdField && Object.prototype.hasOwnProperty.call(data, 'current_mam_cookie')) {
+                mamIdField.value = String(data.current_mam_cookie || '');
+                updateCopyFieldButtons();
+            }
 
             document.getElementById('mam-username').textContent = data.username || 'N/A';
             document.getElementById('mam-class').textContent = data.classname || 'N/A';
@@ -3258,7 +3263,7 @@ document.addEventListener("DOMContentLoaded", async function () {
         const config = [
             { trigger: 'USE_MOUSEHOLE_MAM_COOKIE', target: 'MOUSEHOLE_API_URL' },
             { trigger: 'MAM_PROXY_ENABLED', target: 'MAM_PROXY_URL' },
-            { trigger: 'ENABLE_DYNAMIC_IP_UPDATE', target: 'DYNAMIC_IP_UPDATE_INTERVAL_HOURS' },
+            { trigger: 'ENABLE_DYNAMIC_IP_UPDATE', target: 'DYNAMIC_IP_CHECK_INTERVAL_SECONDS' },
             { trigger: 'HARDCOVER_ENRICHMENT_ENABLED', target: 'HARDCOVER_API_TOKEN' },
             { trigger: 'AUTO_BUY_VIP', target: 'AUTO_BUY_VIP_INTERVAL_HOURS' },
             { trigger: 'AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_ENABLED', target: 'AUTO_BUY_PERSONAL_FL_ON_DOWNLOAD_MIN_SIZE_MB' },
@@ -3285,6 +3290,28 @@ document.addEventListener("DOMContentLoaded", async function () {
         }
         if (mamIdConfig) {
             mamIdConfig.classList.toggle('d-none', useMouseholeCookie);
+        }
+        const autoUpdateIpCard = document.getElementById('auto-update-ip-card');
+        const autoUpdateIpToggle = document.getElementById('ENABLE_DYNAMIC_IP_UPDATE');
+        const autoUpdateIpCollapse = document.getElementById('collapse-ip');
+        const autoUpdateIpInput = document.getElementById('DYNAMIC_IP_CHECK_INTERVAL_SECONDS');
+        const autoUpdateIpHeader = autoUpdateIpCard?.querySelector('.card-header');
+        if (autoUpdateIpCard) {
+            autoUpdateIpCard.classList.toggle('opacity-50', useMouseholeCookie);
+        }
+        if (autoUpdateIpHeader) {
+            autoUpdateIpHeader.classList.toggle('pe-none', useMouseholeCookie);
+        }
+        if (autoUpdateIpToggle) {
+            autoUpdateIpToggle.dataset.locked = useMouseholeCookie ? 'true' : 'false';
+            autoUpdateIpToggle.disabled = useMouseholeCookie;
+            autoUpdateIpToggle.style.pointerEvents = useMouseholeCookie ? 'none' : '';
+        }
+        if (autoUpdateIpCollapse) {
+            autoUpdateIpCollapse.classList.toggle('d-none', useMouseholeCookie);
+        }
+        if (autoUpdateIpInput) {
+            autoUpdateIpInput.disabled = useMouseholeCookie || !isChecked('ENABLE_DYNAMIC_IP_UPDATE');
         }
         const syncMouseholeButton = document.getElementById('sync-mousehole-cookie-button');
         if (syncMouseholeButton) syncMouseholeButton.disabled = !useMouseholeCookie;
@@ -3776,10 +3803,10 @@ document.addEventListener("DOMContentLoaded", async function () {
                     captureSettingsSnapshot();
                     const mouseholeCookieEl = document.getElementById('mousehole-last-cookie');
                     if (mouseholeCookieEl && data.mousehole_cookie) mouseholeCookieEl.value = data.mousehole_cookie;
-                    if (Object.prototype.hasOwnProperty.call(data, 'mousehole_ip')) setMouseholeReportedIp(data.mousehole_ip);
-                    updateMamProxyStatusPanel(data.proxy_status);
-                    fetchPublicIP();
-                    updateCopyFieldButtons();
+                if (Object.prototype.hasOwnProperty.call(data, 'mousehole_ip')) setMouseholeReportedIp(data.mousehole_ip);
+                updateMamProxyStatusPanel(data.proxy_status);
+                fetchPublicIP();
+                updateCopyFieldButtons();
                     const catDropdown = document.getElementById('TORRENT_CLIENT_CATEGORY');
                     if (catDropdown) catDropdown.dataset.currentValue = catDropdown.value;
 
@@ -3790,6 +3817,11 @@ document.addEventListener("DOMContentLoaded", async function () {
                     checkSettingsTorrentClientConnection();
                     checkSettingsHardcoverConnection();
                     loadMamUserData();
+                    const dynamicIpEnabled = document.getElementById('ENABLE_DYNAMIC_IP_UPDATE')?.checked;
+                    const mouseholeEnabled = document.getElementById('USE_MOUSEHOLE_MAM_COOKIE')?.checked;
+                    if (dynamicIpEnabled && !mouseholeEnabled) {
+                        setTimeout(() => loadMamUserData(), 3500);
+                    }
                 }
             })
             .catch(() => showToast("Error saving settings.", 'danger'));

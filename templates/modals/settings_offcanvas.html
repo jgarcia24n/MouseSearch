@@ -607,7 +607,7 @@
 
         <div class="tab-pane fade" id="helpers-pane" role="tabpanel" aria-labelledby="helpers-tab" tabindex="0">
 
-          <div class="card mb-3 border-secondary-subtle toggle-card">
+          <div class="card mb-3 border-secondary-subtle toggle-card" id="auto-update-ip-card">
             <div
               class="card-header border-bottom-0 bg-transparent d-flex justify-content-between align-items-center py-2 cursor-pointer noselect"
               onclick="toggleCardSwitch('ENABLE_DYNAMIC_IP_UPDATE')">
@@ -622,13 +622,13 @@
             <div id="collapse-ip" class="collapse {% if ENABLE_DYNAMIC_IP_UPDATE %}show{% endif %}">
               <div class="card-body border-top pt-2 pb-2">
                 <div class="form-text small mb-2">
-                  With Mousehole Cookie enabled, Mousehole handles IP updates and MouseSearch will not schedule its own.
+                  MouseSearch checks host IP/ASN on the interval below, but only calls MAM when a refresh is actually needed.
                 </div>
                 <div class="form-floating">
-                  <input type="number" class="form-control" id="DYNAMIC_IP_UPDATE_INTERVAL_HOURS"
-                    name="DYNAMIC_IP_UPDATE_INTERVAL_HOURS" min="1" value="{{ DYNAMIC_IP_UPDATE_INTERVAL_HOURS }}"
-                    placeholder="Update Interval (hours)">
-                  <label for="DYNAMIC_IP_UPDATE_INTERVAL_HOURS" class="small">Update Interval (hours)</label>
+                  <input type="number" class="form-control" id="DYNAMIC_IP_CHECK_INTERVAL_SECONDS"
+                    name="DYNAMIC_IP_CHECK_INTERVAL_SECONDS" min="1" value="{{ DYNAMIC_IP_CHECK_INTERVAL_SECONDS }}"
+                    placeholder="Check Interval (seconds)">
+                  <label for="DYNAMIC_IP_CHECK_INTERVAL_SECONDS" class="small">Check Interval (seconds)</label>
                 </div>
               </div>
             </div>
