@@ -56,11 +56,6 @@ HARDCOVER_USER_BOOK_PRELOAD_ACTIVE = False
 torrent_client = None
 mam_session_cookies = {}
 mam_session_cookie_lock = asyncio.Lock()
-mousehole_cookie_last_refresh = 0.0
-mousehole_cookie_last_error = None
-mousehole_last_mam_cookie = ""
-mousehole_last_host_ip = ""
-MOUSEHOLE_COOKIE_REFRESH_SECONDS = 30.0
 MAM_PROXY_FALLBACK_STATUS_CODES = {407, 502, 503, 504}
 mam_proxy_route_state = {
     "route": "direct",
@@ -705,7 +700,7 @@ async def startup():
         )
         scheduler.add_job(check_and_buy_upload, 'date', run_date=datetime.now() + timedelta(seconds=15), id='initial_upload_check_job')
 
-    if app.config.get("ENABLE_DYNAMIC_IP_UPDATE") and not uses_mousehole_mam_cookie():
+    if app.config.get("ENABLE_DYNAMIC_IP_UPDATE"):
         interval_seconds = int(
             app.config.get(
                 "DYNAMIC_IP_CHECK_INTERVAL_SECONDS",
@@ -964,8 +959,6 @@ FALLBACK_CONFIG = {
     "QBITTORRENT_VERIFY_WEBUI_CERTIFICATE": True,
     "RTORRENT_DIGEST_AUTH": False,
     "MAM_ID": "",
-    "USE_MOUSEHOLE_MAM_COOKIE": False,
-    "MOUSEHOLE_API_URL": "http://localhost:5010",
     "MAM_PROXY_ENABLED": False,
     "MAM_PROXY_URL": "",
     "MAM_PROXY_ONLY": True,
@@ -1361,15 +1354,6 @@ def resolve_local_content_path(config: dict, torrent_info: dict) -> Path | None:
     return Path(name)
 
 
-def normalize_mousehole_api_url(value) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-    if "://" not in raw:
-        raw = f"http://{raw}"
-    return raw.rstrip("/")
-
-
 def normalize_mam_cookie_value(value) -> str:
     raw = str(value or "").strip()
     for part in raw.split(";"):
@@ -1404,10 +1388,6 @@ async def sync_mam_session_cookie_from_response(response: httpx.Response | None)
             return changed
 
         display_cookie = format_cookie_for_display(rotated_cookie)
-        if uses_mousehole_mam_cookie():
-            app.logger.info("[MAM-COOKIE] Rotated session cookie from API response: %s", display_cookie)
-            return changed
-
         if app.config.get("MAM_ID") != rotated_cookie:
             app.config["MAM_ID"] = rotated_cookie
             save_config(app.config)
@@ -1676,7 +1656,6 @@ def load_config():
         "AUTO_ORGANIZE_USE_COPY",
         "HAPTICS_ENABLED",
         "ENABLE_DYNAMIC_IP_UPDATE",
-        "USE_MOUSEHOLE_MAM_COOKIE",
         "MAM_PROXY_ENABLED",
         "MAM_PROXY_ONLY",
         "MAM_PROXY_FALLBACK_DIRECT",
@@ -1698,7 +1677,6 @@ def load_config():
             # Check against common string representations of True
             config[key] = str(val).lower() in ('true', '1', 't', 'yes', 'on')
 
-    config["MOUSEHOLE_API_URL"] = normalize_mousehole_api_url(config.get("MOUSEHOLE_API_URL"))
     config["MAM_PROXY_URL"] = normalize_proxy_url(config.get("MAM_PROXY_URL"))
 
     config["RESULTS_DISPLAY_FIELDS"] = normalize_result_display_fields(
@@ -2115,14 +2093,9 @@ async def load_new_app_config():
     ).resolve()
     REMOTE_TORRENT_DOWNLOAD_PATH = new_config.get("REMOTE_TORRENT_DOWNLOAD_PATH") or None
     
-    global mam_session_cookies, mousehole_last_mam_cookie, mousehole_last_host_ip
+    global mam_session_cookies
     mam_session_cookies = {"mam_id": normalize_mam_cookie_value(app.config.get("MAM_ID"))}
-    mousehole_last_mam_cookie = ""
-    mousehole_last_host_ip = ""
-    if uses_mousehole_mam_cookie():
-        mam_session_cookies = {}
-        await refresh_mam_cookie_from_mousehole(force=True)
-    
+
     # --- CRITICAL FIX HERE ---
     global torrent_client 
     try:
@@ -2593,10 +2566,6 @@ async def force_update_ip(
 ):
     async with app.app_context():
         app.logger.info("Updating dynamic seedbox because: %s", update_reason)
-        if uses_mousehole_mam_cookie():
-            app.logger.info("Skipping MouseSearch IP update because Mousehole cookie mode is enabled.")
-            return
-
         state = load_dynamic_ip_state()
         if previous_ip is None:
             previous_ip = get_dynamic_ip_state_last_ip(state)
@@ -2705,10 +2674,6 @@ async def force_update_ip(
 
 async def check_and_update_ip():
     async with app.app_context():
-        if uses_mousehole_mam_cookie():
-            app.logger.info("Skipping MouseSearch IP check because Mousehole cookie mode is enabled.")
-            return
-
         try:
             host_info = await fetch_current_dynamic_ip_host_info()
         except Exception as e:
@@ -3042,80 +3007,7 @@ async def check_and_buy_upload():
 
 
 # --- SESSION AND API HELPERS ---
-def uses_mousehole_mam_cookie() -> bool:
-    return bool(app.config.get("USE_MOUSEHOLE_MAM_COOKIE"))
-
-
-def get_mousehole_api_url(override_url=None) -> str:
-    value = override_url if override_url is not None else app.config.get("MOUSEHOLE_API_URL")
-    return normalize_mousehole_api_url(value)
-
-
-async def refresh_mam_cookie_from_mousehole(
-    force: bool = False,
-    base_url_override=None,
-    allow_cached_on_error: bool = True,
-) -> bool:
-    global mousehole_cookie_last_refresh, mousehole_cookie_last_error, mousehole_last_mam_cookie, mousehole_last_host_ip
-
-    base_url = get_mousehole_api_url(base_url_override)
-    if not base_url:
-        mousehole_cookie_last_error = "Mousehole API URL is not configured."
-        mam_session_cookies.pop("mam_id", None)
-        mousehole_last_mam_cookie = ""
-        mousehole_last_host_ip = ""
-        return False
-
-    now = time.monotonic()
-    if (
-        not force
-        and base_url_override is None
-        and mam_session_cookies.get("mam_id")
-        and now - mousehole_cookie_last_refresh < MOUSEHOLE_COOKIE_REFRESH_SECONDS
-    ):
-        return True
-
-    async with mam_session_cookie_lock:
-        now = time.monotonic()
-        if (
-            not force
-            and base_url_override is None
-            and mam_session_cookies.get("mam_id")
-            and now - mousehole_cookie_last_refresh < MOUSEHOLE_COOKIE_REFRESH_SECONDS
-        ):
-            return True
-
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(f"{base_url}/state", timeout=5)
-                response.raise_for_status()
-                state = response.json()
-
-            current_cookie = normalize_mam_cookie_value(state.get("currentCookie"))
-            mousehole_last_host_ip = str((state.get("host") or {}).get("ip") or "").strip()
-            mousehole_cookie_last_refresh = time.monotonic()
-            if current_cookie:
-                mam_session_cookies["mam_id"] = current_cookie
-                mousehole_last_mam_cookie = current_cookie
-                mousehole_cookie_last_error = None
-                return True
-
-            mam_session_cookies.pop("mam_id", None)
-            mousehole_last_mam_cookie = ""
-            mousehole_last_host_ip = ""
-            mousehole_cookie_last_error = "Mousehole does not have a MAM cookie configured."
-            app.logger.warning("[MOUSEHOLE] /state did not return currentCookie")
-            return False
-        except Exception as exc:
-            mousehole_cookie_last_error = f"Could not fetch Mousehole MAM cookie: {exc}"
-            app.logger.warning(f"[MOUSEHOLE] Failed to fetch /state: {exc}")
-            return allow_cached_on_error and bool(mam_session_cookies.get("mam_id"))
-
-
-async def ensure_mam_session_cookie(force_mousehole_refresh: bool = False) -> bool:
-    if uses_mousehole_mam_cookie():
-        return await refresh_mam_cookie_from_mousehole(force=force_mousehole_refresh)
-
+async def ensure_mam_session_cookie() -> bool:
     if not mam_session_cookies.get("mam_id") and app.config.get("MAM_ID"):
         mam_session_cookies["mam_id"] = normalize_mam_cookie_value(app.config.get("MAM_ID"))
     return bool(mam_session_cookies.get("mam_id"))
@@ -3519,42 +3411,6 @@ async def mam_status():
     }), status_code
 
 
-@app.route('/mam/sync_mousehole_cookie', methods=['POST'])
-async def sync_mousehole_cookie():
-    payload = await request.get_json(silent=True) or {}
-    form_enabled = coerce_bool(payload.get("use_mousehole_mam_cookie"), False)
-    mousehole_api_url = payload.get("mousehole_api_url")
-
-    if not uses_mousehole_mam_cookie() and not form_enabled:
-        return jsonify({
-            'status': 'error',
-            'message': 'Mousehole cookie mode is not enabled.',
-            'cookie': format_cookie_for_display(mousehole_last_mam_cookie),
-            'mousehole_ip': mousehole_last_host_ip,
-        }), 400
-
-    synced = await refresh_mam_cookie_from_mousehole(
-        force=True,
-        base_url_override=mousehole_api_url,
-        allow_cached_on_error=False,
-    )
-    cookie = mousehole_last_mam_cookie
-    if synced and cookie:
-        return jsonify({
-            'status': 'success',
-            'message': 'Mousehole cookie synced.',
-            'cookie': format_cookie_for_display(cookie),
-            'mousehole_ip': mousehole_last_host_ip,
-        })
-
-    return jsonify({
-        'status': 'error',
-        'message': mousehole_cookie_last_error or 'Mousehole cookie sync failed.',
-        'cookie': format_cookie_for_display(cookie),
-        'mousehole_ip': mousehole_last_host_ip,
-    }), 502
-
-
 @app.route('/mam/user_data', methods=['GET'])
 async def mam_user_data():
     result = await fetch_mam_json_load_result()
@@ -3760,10 +3616,7 @@ async def fetch_mam_json_load_result():
         return {"data": None, "message": message, "status_code": 500}
 
     if not mam_id_present:
-        if uses_mousehole_mam_cookie():
-            message = mousehole_cookie_last_error or "Mousehole MAM cookie is not configured."
-        else:
-            message = "MAM session ID is not configured."
+        message = "MAM session ID is not configured."
         app.logger.warning("[MAM-API] %s url=%s mam_id_present=%s", message, sanitized_url, mam_id_present)
         return {"data": None, "message": message, "status_code": 401}
 
@@ -5475,8 +5328,6 @@ async def index():
         LANGUAGE_CHOICES=language_choices,
         LANGUAGE_MAP=language_dict,
         DEFAULT_LANGUAGE_ID=language_dict.get("English", 1),
-        MOUSEHOLE_LAST_MAM_COOKIE=format_cookie_for_display(mousehole_last_mam_cookie),
-        MOUSEHOLE_LAST_HOST_IP=mousehole_last_host_ip,
         **app.config
     )
     
@@ -5761,7 +5612,6 @@ async def api_settings():
 async def update_settings():
     form = await request.form
     config_to_update = app.config.copy()
-    previous_use_mousehole_cookie = bool(app.config.get("USE_MOUSEHOLE_MAM_COOKIE"))
     previous_mam_id = normalize_mam_cookie_value(app.config.get("MAM_ID"))
     boolean_fields = {
         "AUTO_ORGANIZE_ON_ADD",
@@ -5770,7 +5620,6 @@ async def update_settings():
         "HAPTICS_ENABLED",
         "HARDCOVER_ENRICHMENT_ENABLED",
         "ENABLE_DYNAMIC_IP_UPDATE",
-        "USE_MOUSEHOLE_MAM_COOKIE",
         "MAM_PROXY_ENABLED",
         "MAM_PROXY_ONLY",
         "MAM_PROXY_FALLBACK_DIRECT",
@@ -5829,18 +5678,12 @@ async def update_settings():
     )
 
     if form.get("TORRENT_CLIENT_PASSWORD"): config_to_update["TORRENT_CLIENT_PASSWORD"] = form.get("TORRENT_CLIENT_PASSWORD")
-    next_use_mousehole_cookie = coerce_bool(
-        config_to_update.get("USE_MOUSEHOLE_MAM_COOKIE"),
-        FALLBACK_CONFIG["USE_MOUSEHOLE_MAM_COOKIE"],
-    )
     next_mam_id = normalize_mam_cookie_value(config_to_update.get("MAM_ID"))
-    if next_use_mousehole_cookie != previous_use_mousehole_cookie:
-        invalidate_dynamic_ip_state("MAM auth mode changed")
-    elif not next_use_mousehole_cookie and next_mam_id != previous_mam_id:
-        invalidate_dynamic_ip_state("Direct MAM session cookie changed")
+    if next_mam_id != previous_mam_id:
+        invalidate_dynamic_ip_state("MAM session cookie changed")
     save_config(config_to_update)
     await load_new_app_config()
-    if app.config.get("ENABLE_DYNAMIC_IP_UPDATE") and not uses_mousehole_mam_cookie():
+    if app.config.get("ENABLE_DYNAMIC_IP_UPDATE"):
         interval_seconds = int(
             app.config.get(
                 "DYNAMIC_IP_CHECK_INTERVAL_SECONDS",
@@ -5918,8 +5761,6 @@ async def update_settings():
         "status": "success", 
         "message": "Settings updated!",
         "client_display_name": display_name,
-        "mousehole_cookie": format_cookie_for_display(mousehole_last_mam_cookie),
-        "mousehole_ip": mousehole_last_host_ip,
         "proxy_status": build_mam_proxy_status_payload(),
     })
 

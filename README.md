@@ -144,9 +144,7 @@ Open the `.env` file and configure the following settings.
 | Variable | Required | Description |
 | :--- | :--- | :--- |
 | `QUART_SECRET_KEY` | **Yes** | A long, random string for session security. You can generate one with `openssl rand -hex 32` (or just smash on the keyboard a bit) |
-| `MAM_ID` | **Yes, unless using Mousehole** | Your initial `mam_id` cookie value from [MyAnonamouse](https://www.myanonamouse.net/preferences/index.php?view=security). MouseSearch will automatically adopt rotated `mam_id` values returned by MAM and persist the latest one in direct-cookie mode. |
-| `USE_MOUSEHOLE_MAM_COOKIE` | No | Set to `true` to read the MAM cookie from a running Mousehole service instead of configuring `MAM_ID` in MouseSearch. Defaults to `false`. |
-| `MOUSEHOLE_API_URL` | If `USE_MOUSEHOLE_MAM_COOKIE` is `true` | Base URL for Mousehole's API, such as `http://localhost:5010` or `http://mousehole:5010`. Defaults to `http://localhost:5010`. |
+| `MAM_ID` | **Yes** | Your initial `mam_id` cookie value from [MyAnonamouse](https://www.myanonamouse.net/preferences/index.php?view=security). MouseSearch maintains its own session: it automatically adopts rotated `mam_id` values returned by MAM and persists the latest one. Use a session dedicated to MouseSearch so it does not share a cookie chain with other apps. |
 | `MAM_PROXY_ENABLED` | No | Enables the MAM-specific proxy feature. Defaults to `false`. |
 | `MAM_PROXY_URL` | No | Optional outbound proxy used for MAM requests, such as `http://gluetun:8888`, `http://user:pass@proxy:8080`, or `socks5h://user:pass@proxy:1080`. |
 | `MAM_PROXY_ONLY` | No | Keeps the proxy scoped to MAM traffic when `true`. Defaults to `true`. |
@@ -160,9 +158,9 @@ Why this matters:
 
 * MouseSearch depends on a valid `mam_id` cookie for MAM requests.
 * Many setups also rely on MAM's Dynamic Seedbox IP update flow so downloads are allowed from the expected public IP.
-* MAM download permissions are IP-sensitive: in practice, your browser session, MouseSearch, Mousehole, and torrent client often need to agree on which public IP is being presented to MAM.
+* MAM download permissions are IP-sensitive: in practice, your browser session, MouseSearch, and torrent client often need to agree on which public IP is being presented to MAM.
 * If MouseSearch talks to MAM from a different public IP than the rest of your stack, MAM cookie auth may still work, but downloads or Dynamic Seedbox API behavior can become inconsistent.
-* A MAM-only proxy lets MouseSearch keep its UI on the normal network path while sending MAM-bound traffic through the same VPN/proxy egress as qBittorrent, Mousehole, or another downloader.
+* A MAM-only proxy lets MouseSearch keep its UI on the normal network path while sending MAM-bound traffic through the same VPN/proxy egress as qBittorrent or another downloader.
 
 Typical example:
 
@@ -202,7 +200,7 @@ MouseSearch supports modular torrent clients. Currently supported: **qBittorrent
 | Variable | Required | Description |
 | :--- | :--- | :--- |
 | `DATA_PATH` | No | Directory path for storing app data files (config.json, database.json, ip_state.json). Defaults to `./data`. |
-| `ENABLE_DYNAMIC_IP_UPDATE` | No | Set to `true` to enable automatic IP checking and updating of MAM's "Dynamic Seedbox IP" setting. Ignored when Mousehole cookie mode is enabled because Mousehole handles its own IP updates. Defaults to `false`. |
+| `ENABLE_DYNAMIC_IP_UPDATE` | No | Set to `true` to enable automatic IP checking and updating of MAM's "Dynamic Seedbox IP" setting. Defaults to `false`. |
 | `DYNAMIC_IP_CHECK_INTERVAL_SECONDS` | No | Number of seconds between host IP/ASN checks when automatic MAM updates are enabled. MouseSearch only calls MAM when a refresh is actually needed. Defaults to `300`. |
 | `DYNAMIC_IP_STALE_RESPONSE_SECONDS` | No | Maximum age of the last successful MAM update response before MouseSearch refreshes it even if IP and ASN have not changed. Defaults to `86400`. |
 | `DYNAMIC_IP_UPDATE_INTERVAL_HOURS` | Legacy fallback | Older hour-based interval. If `DYNAMIC_IP_CHECK_INTERVAL_SECONDS` is unset, MouseSearch converts this value to seconds for backward compatibility. |
@@ -299,13 +297,13 @@ AUTO_TASK_WEBHOOK_METHOD=GET
 AUTO_TASK_WEBHOOK_PARAMS=source=mousesearch&event={event}&status={status}&summary={summary}
 ```
 
-**Using Mousehole for the MAM cookie:**
+**About the `MAM_ID` session cookie:**
 
-If you already run [Mousehole](https://github.com/t-mart/mousehole), enable `USE_MOUSEHOLE_MAM_COOKIE` and set `MOUSEHOLE_API_URL` to the URL MouseSearch can reach. MouseSearch reads Mousehole's `currentCookie` from `GET /state`. MouseSearch does not schedule or force IP updates in this mode; Mousehole remains responsible for keeping MAM's dynamic seedbox IP current.
+MouseSearch treats the configured `MAM_ID` as the starting cookie only. During normal API traffic it will use any newer `mam_id` returned by MAM and save that rotated value so restarts continue with the latest session cookie.
 
-When not using Mousehole, MouseSearch treats the configured `MAM_ID` as the starting cookie only. During normal API traffic it will use any newer `mam_id` returned by MAM and save that rotated value so restarts continue with the latest session cookie.
+Because MAM rotates the `mam_id` on every request, give MouseSearch its own dedicated session (created on the [Security](https://www.myanonamouse.net/preferences/index.php?view=security) page) rather than sharing a session/cookie with another application — otherwise the two will invalidate each other's cookies and authentication will break intermittently.
 
-**Important:** Mousehole and MouseSearch must share the same public IP address, such as the same server or VPN connection. If they do not, MouseSearch may not function.
+If authentication fails because your server's public IP is not allowed for the session, MouseSearch surfaces the current public IP (with a copy button and a link to the security page) in **Settings → MyAnonaMouse Auth** so you can add it to the session's allowed IPs/ASNs.
 
 **How to find your `MAM_ID`:**
 1.  In any web browser, navigate to [Security](https://www.myanonamouse.net/preferences/index.php?view=security) on Myanonamouse

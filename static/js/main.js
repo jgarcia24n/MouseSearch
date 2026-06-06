@@ -2426,6 +2426,49 @@ function refreshCategories() {
         });
 }
 
+let authFailureToastShown = false;
+
+// Shows the "add your IP to MAM" prompt (with the server's public IP, a copy
+// button, and a security-page link) and fires a one-time toast pointing there.
+function showMamAuthFailurePrompt() {
+    hideMamNotConfiguredPrompt();
+    const block = document.getElementById('mam-auth-fix-ip');
+    if (block) block.classList.remove('d-none');
+    // The IP is populated by fetchPublicIP(); fetch it now if it hasn't resolved.
+    if (!window.mousesearchPublicIp) fetchPublicIP();
+    if (!authFailureToastShown) {
+        authFailureToastShown = true;
+        showToast("MAM cookie isn't authenticating. Your server's IP may need to be added to your MAM session — see Settings → MyAnonaMouse Auth.", 'danger');
+    }
+}
+
+function hideMamAuthFailurePrompt() {
+    const block = document.getElementById('mam-auth-fix-ip');
+    if (block) block.classList.add('d-none');
+    authFailureToastShown = false;
+}
+
+let notConfiguredToastShown = false;
+
+// Shows the "set your mam_id" prompt when no session cookie is configured. This is
+// a different problem from an IP-authorization failure, so it gets its own message
+// and never points the user at the security/IP page.
+function showMamNotConfiguredPrompt() {
+    hideMamAuthFailurePrompt();
+    const block = document.getElementById('mam-not-configured');
+    if (block) block.classList.remove('d-none');
+    if (!notConfiguredToastShown) {
+        notConfiguredToastShown = true;
+        showToast("No MAM session ID is set. Add your mam_id in Settings → MyAnonaMouse Auth.", 'danger');
+    }
+}
+
+function hideMamNotConfiguredPrompt() {
+    const block = document.getElementById('mam-not-configured');
+    if (block) block.classList.add('d-none');
+    notConfiguredToastShown = false;
+}
+
 function loadMamUserData() {
     fetch('/mam/user_data', { cache: "no-store" })
         .then(async response => {
@@ -2493,6 +2536,8 @@ function loadMamUserData() {
                 label: 'Authenticated',
                 level: 'success',
             });
+            hideMamAuthFailurePrompt();
+            hideMamNotConfiguredPrompt();
         })
         .catch(error => {
             const statusSpan = document.getElementById('mam-status');
@@ -2522,16 +2567,33 @@ function loadMamUserData() {
                 vipWeeksContainer.style.display = 'none';
             }
 
-            if (error?.httpStatus === 403) {
+            const httpStatus = Number(error?.httpStatus);
+            const responseMessage = String(error?.responseMessage || error?.message || 'Unknown error').trim();
+            const isTimeout = httpStatus === 504 || /timed?\s*out|timeout/i.test(responseMessage);
+            const mamIdInput = document.getElementById('MAM_ID');
+            const mamIdEmpty = !mamIdInput || !String(mamIdInput.value || '').trim();
+            // The backend returns 401 only when no mam_id cookie is set at all. Treat
+            // that as "not configured" (set your mam_id), not an IP-authorization problem.
+            const isNotConfigured = httpStatus === 401 && (mamIdEmpty || /not configured/i.test(responseMessage));
+            // A genuine auth failure (cookie present but rejected — e.g. the IP/ASN
+            // isn't allowed on the session) is what the IP-fix prompt is for.
+            const isAuthFailure = httpStatus === 403 || (httpStatus === 401 && !isNotConfigured);
+
+            if (isNotConfigured) {
+                updateMamCookieStatus({
+                    kind: 'unconfigured',
+                    label: 'Not configured',
+                    level: 'danger',
+                });
+                showMamNotConfiguredPrompt();
+            } else if (isAuthFailure) {
                 updateMamCookieStatus({
                     kind: 'unauthenticated',
                     label: 'Unauthenticated',
                     level: 'danger',
                 });
+                showMamAuthFailurePrompt();
             } else {
-                const httpStatus = Number(error?.httpStatus);
-                const responseMessage = String(error?.responseMessage || error?.message || 'Unknown error').trim();
-                const isTimeout = httpStatus === 504 || /timed?\s*out|timeout/i.test(responseMessage);
                 const label = Number.isFinite(httpStatus) && httpStatus > 0
                     ? `HTTP ${httpStatus}: ${isTimeout ? `Timeout - ${responseMessage}` : responseMessage}`
                     : (isTimeout ? `Timeout: ${responseMessage}` : responseMessage);
@@ -2540,6 +2602,10 @@ function loadMamUserData() {
                     label,
                     level: 'danger',
                 });
+                // Network/server errors aren't IP-authorization issues, so don't push
+                // the user toward the security page.
+                hideMamAuthFailurePrompt();
+                hideMamNotConfiguredPrompt();
             }
         });
 }
@@ -2587,17 +2653,13 @@ function updateCopyFieldButtons() {
         const target = selector ? document.querySelector(selector) : null;
         const value = fieldCopyValue(target);
         const usableValue = value && value !== 'Not synced';
-        const mouseholeEnabled = document.getElementById('USE_MOUSEHOLE_MAM_COOKIE')?.checked;
-        const targetIsIgnoredMamId = btn.dataset.copyTarget === '#MAM_ID' && mouseholeEnabled;
-        btn.classList.toggle('d-none', !navigator.clipboard || !usableValue || targetIsIgnoredMamId);
+        btn.classList.toggle('d-none', !navigator.clipboard || !usableValue);
     });
 }
 
 function normalizeIpForCompare(value) {
     return String(value || '').trim().toLowerCase();
 }
-
-let lastMouseholeIpMismatchToastKey = '';
 
 function setHealthBadge(elementId, state) {
     const badge = document.getElementById(elementId);
@@ -2653,57 +2715,14 @@ function currentMamProxyRoute() {
     return String(window.mamProxyStatus?.route || 'direct');
 }
 
-function mouseSearchEffectiveIpForCompare() {
-    const route = currentMamProxyRoute();
-    if (route === 'proxy') {
-        return normalizeIpForCompare(window.mousesearchProxyIp);
-    }
-    if (route === 'direct_fallback' || route === 'direct') {
-        return normalizeIpForCompare(window.mousesearchPublicIp);
-    }
-    return '';
-}
-
-function currentMouseholeIpMismatch() {
-    const warning = document.getElementById('mousehole-ip-warning');
-    if (!warning) return null;
-
-    const mouseholeEnabled = document.getElementById('USE_MOUSEHOLE_MAM_COOKIE')?.checked;
-    const mouseholeIp = normalizeIpForCompare(warning.dataset.mouseholeIp);
-    const directIp = normalizeIpForCompare(window.mousesearchPublicIp);
-    const proxyIp = normalizeIpForCompare(window.mousesearchProxyIp);
-    const effectiveIp = mouseSearchEffectiveIpForCompare();
-    const route = currentMamProxyRoute();
-    const proxyError = route === 'error' || route === 'configured';
-    const hasComparableIps = Boolean(mouseholeEnabled && mouseholeIp && effectiveIp && !proxyError);
-    const shouldWarn = Boolean(hasComparableIps && mouseholeIp !== effectiveIp);
-    const isHealthy = Boolean(hasComparableIps && mouseholeIp === effectiveIp);
-
-    return { warning, mouseholeIp, directIp, proxyIp, effectiveIp, route, shouldWarn, isHealthy, proxyError, mouseholeEnabled };
-}
-
-function showMouseholeIpMismatchToast(force = false) {
-    const mismatch = currentMouseholeIpMismatch();
-    if (!mismatch?.shouldWarn) return;
-
-    const mismatchKey = `${mismatch.mouseholeIp}|${mismatch.effectiveIp}|${mismatch.route}`;
-    if (force || lastMouseholeIpMismatchToastKey !== mismatchKey) {
-        lastMouseholeIpMismatchToastKey = mismatchKey;
-        showToast('Mousehole and MouseSearch do not share the same public IP address. MouseSearch may not function.', 'danger');
-    }
-}
-
 function updateNetworkSection() {
-    const mismatch = currentMouseholeIpMismatch();
     const alert = document.getElementById('network-status-alert');
-    if (!mismatch || !alert) return;
+    if (!alert) return;
 
     const healthLabel = document.getElementById('network-health-label');
     const statusMessage = document.getElementById('network-status-message');
     const routeLabel = document.getElementById('network-route-label');
     const ipList = document.getElementById('network-ip-list');
-    const mouseholeIpEl = document.getElementById('network-mousehole-ip');
-    const mouseholeIpRow = document.getElementById('network-mousehole-ip-row');
     const directIpEl = document.getElementById('network-direct-ip');
     const directIpRow = document.getElementById('network-direct-ip-row');
     const proxyIpEl = document.getElementById('network-proxy-ip');
@@ -2711,10 +2730,9 @@ function updateNetworkSection() {
     const proxyErrorRow = document.getElementById('network-proxy-error-row');
     const proxyErrorEl = document.getElementById('network-proxy-error');
 
-    const mouseholeIp = mismatch.mouseholeIp || '';
-    const directIp = mismatch.directIp || '';
-    const proxyIp = mismatch.proxyIp || '';
-    const route = mismatch.route;
+    const directIp = normalizeIpForCompare(window.mousesearchPublicIp);
+    const proxyIp = normalizeIpForCompare(window.mousesearchProxyIp);
+    const route = currentMamProxyRoute();
     const proxyEnabled = document.getElementById('MAM_PROXY_ENABLED')?.checked;
     const mamCookieStatus = window.mamCookieStatus && typeof window.mamCookieStatus === 'object'
         ? window.mamCookieStatus
@@ -2727,11 +2745,9 @@ function updateNetworkSection() {
         configured: 'Unavailable',
     };
 
-    if (mouseholeIpEl) mouseholeIpEl.textContent = mouseholeIp || 'Unavailable';
     if (directIpEl) directIpEl.textContent = directIp || 'Unavailable';
     if (proxyIpEl) proxyIpEl.textContent = proxyIp || 'Unavailable';
     if (proxyIpRow) proxyIpRow.classList.toggle('d-none', !proxyEnabled);
-    if (mouseholeIpRow) mouseholeIpRow.classList.toggle('d-none', !mismatch.mouseholeEnabled);
     if (routeLabel) routeLabel.textContent = proxyEnabled ? (routeLabels[route] || 'Direct') : 'Direct';
 
     if (ipList) {
@@ -2742,7 +2758,6 @@ function updateNetworkSection() {
             if (directIpRow) ipList.appendChild(directIpRow);
             if (proxyIpRow) ipList.appendChild(proxyIpRow);
         }
-        if (mouseholeIpRow) ipList.appendChild(mouseholeIpRow);
     }
 
     const lastError = String(window.mamProxyStatus?.last_error || '').trim();
@@ -2754,7 +2769,10 @@ function updateNetworkSection() {
     let networkState = 'checking';
     let networkMessage = 'Waiting for network status.';
 
-    if (mamCookieStatus.kind === 'unauthenticated') {
+    if (mamCookieStatus.kind === 'unconfigured') {
+        networkState = 'unhealthy';
+        networkMessage = 'No MAM session ID is configured.';
+    } else if (mamCookieStatus.kind === 'unauthenticated') {
         networkState = 'unhealthy';
         networkMessage = 'MAM cookie is unauthenticated.';
     } else if (mamCookieStatus.kind === 'timeout' || mamCookieStatus.kind === 'error') {
@@ -2763,17 +2781,6 @@ function updateNetworkSection() {
     } else if (mamCookieStatus.kind === 'checking') {
         networkState = 'checking';
         networkMessage = 'Waiting for MAM cookie status.';
-    } else if (mismatch.mouseholeEnabled) {
-        if (mismatch.proxyError) {
-            networkState = 'unhealthy';
-            networkMessage = 'Proxy is unavailable, so IP matching cannot be verified.';
-        } else if (mismatch.shouldWarn) {
-            networkState = 'unhealthy';
-            networkMessage = 'Mousehole and MouseSearch are not using the same public IP.';
-        } else if (mismatch.isHealthy) {
-            networkState = 'healthy';
-            networkMessage = 'Mousehole and MouseSearch are using the same public IP.';
-        }
     } else if (proxyEnabled) {
         if (route === 'proxy') {
             networkState = 'healthy';
@@ -2800,63 +2807,6 @@ function updateNetworkSection() {
                 : 'Checking';
     }
     if (statusMessage) statusMessage.textContent = networkMessage;
-}
-
-function updateMouseholeIpWarning(showToastOnMismatch = true) {
-    const mismatch = currentMouseholeIpMismatch();
-    if (!mismatch) return;
-
-    const { mouseholeIp, shouldWarn, isHealthy, proxyError, mouseholeEnabled } = mismatch;
-    const warning = document.getElementById('mousehole-ip-warning');
-    const statusMessage = document.getElementById('mousehole-ip-status-message');
-
-    if (warning) {
-        warning.className = 'alert small mt-3 mb-0';
-    }
-
-    if (!mouseholeEnabled || !mouseholeIp) {
-        setHealthBadge('mousehole-health-badge', mouseholeEnabled ? 'checking' : 'disabled');
-        if (warning) warning.classList.add('alert-secondary');
-        if (statusMessage) statusMessage.textContent = mouseholeEnabled ? 'Checking...' : 'Disabled';
-        lastMouseholeIpMismatchToastKey = '';
-        updateNetworkSection();
-        return;
-    }
-
-    if (proxyError) {
-        setHealthBadge('mousehole-health-badge', 'unhealthy');
-        if (warning) warning.classList.add('alert-warning');
-        if (statusMessage) statusMessage.textContent = 'Unhealthy (details in the Network section below)';
-    } else if (isHealthy) {
-        setHealthBadge('mousehole-health-badge', 'healthy');
-        if (warning) warning.classList.add('alert-success');
-        if (statusMessage) statusMessage.textContent = 'Healthy (details in the Network section below)';
-        lastMouseholeIpMismatchToastKey = '';
-    } else if (shouldWarn) {
-        setHealthBadge('mousehole-health-badge', 'unhealthy');
-        if (warning) warning.classList.add('alert-warning');
-        if (statusMessage) statusMessage.textContent = 'Unhealthy (details in the Network section below)';
-    } else {
-        setHealthBadge('mousehole-health-badge', 'checking');
-        if (warning) warning.classList.add('alert-secondary');
-        if (statusMessage) statusMessage.textContent = 'Checking...';
-        lastMouseholeIpMismatchToastKey = '';
-    }
-
-    updateNetworkSection();
-
-    if (showToastOnMismatch && shouldWarn) {
-        showMouseholeIpMismatchToast();
-    } else if (!shouldWarn) {
-        lastMouseholeIpMismatchToastKey = '';
-    }
-}
-
-function setMouseholeReportedIp(ip, showToastOnMismatch = true) {
-    const warning = document.getElementById('mousehole-ip-warning');
-    if (!warning) return;
-    warning.dataset.mouseholeIp = String(ip || '').trim();
-    updateMouseholeIpWarning(showToastOnMismatch);
 }
 
 function updateMamProxyStatusPanel(proxyStatus) {
@@ -2895,7 +2845,6 @@ function updateMamProxyStatusPanel(proxyStatus) {
     if (message) message.textContent = sectionMessage;
 
     updateNetworkSection();
-    updateMouseholeIpWarning(false);
 }
 
 async function fetchPublicIP() {
@@ -2943,17 +2892,15 @@ async function fetchPublicIP() {
 
             if (proxyData?.proxy_status) {
                 updateMamProxyStatusPanel(proxyData.proxy_status);
-            } else {
-                updateMouseholeIpWarning(false);
             }
-            updateMouseholeIpWarning();
+            updateNetworkSection();
         })
         .catch(err => {
             console.error("Failed to fetch IP", err);
             document.querySelectorAll('.backend-ip-display').forEach(el => el.textContent = "Unavailable");
             window.mousesearchPublicIp = '';
             window.mousesearchProxyIp = '';
-            updateMouseholeIpWarning(false);
+            updateNetworkSection();
         });
 }
 
@@ -3255,7 +3202,6 @@ document.addEventListener("DOMContentLoaded", async function () {
         const isChecked = (id) => document.getElementById(id)?.checked || false;
 
         const config = [
-            { trigger: 'USE_MOUSEHOLE_MAM_COOKIE', target: 'MOUSEHOLE_API_URL' },
             { trigger: 'MAM_PROXY_ENABLED', target: 'MAM_PROXY_URL' },
             { trigger: 'ENABLE_DYNAMIC_IP_UPDATE', target: 'DYNAMIC_IP_CHECK_INTERVAL_SECONDS' },
             { trigger: 'HARDCOVER_ENRICHMENT_ENABLED', target: 'HARDCOVER_API_TOKEN' },
@@ -3275,42 +3221,12 @@ document.addEventListener("DOMContentLoaded", async function () {
             });
         });
 
-        const useMouseholeCookie = isChecked('USE_MOUSEHOLE_MAM_COOKIE');
         const mamIdInput = document.getElementById('MAM_ID');
-        const mamIdConfig = document.getElementById('mam-id-config');
         if (mamIdInput) {
-            mamIdInput.disabled = useMouseholeCookie;
-            mamIdInput.required = !useMouseholeCookie;
+            mamIdInput.required = true;
         }
-        if (mamIdConfig) {
-            mamIdConfig.classList.toggle('d-none', useMouseholeCookie);
-        }
-        const autoUpdateIpCard = document.getElementById('auto-update-ip-card');
-        const autoUpdateIpToggle = document.getElementById('ENABLE_DYNAMIC_IP_UPDATE');
-        const autoUpdateIpCollapse = document.getElementById('collapse-ip');
-        const autoUpdateIpInput = document.getElementById('DYNAMIC_IP_CHECK_INTERVAL_SECONDS');
-        const autoUpdateIpHeader = autoUpdateIpCard?.querySelector('.card-header');
-        if (autoUpdateIpCard) {
-            autoUpdateIpCard.classList.toggle('opacity-50', useMouseholeCookie);
-        }
-        if (autoUpdateIpHeader) {
-            autoUpdateIpHeader.classList.toggle('pe-none', useMouseholeCookie);
-        }
-        if (autoUpdateIpToggle) {
-            autoUpdateIpToggle.dataset.locked = useMouseholeCookie ? 'true' : 'false';
-            autoUpdateIpToggle.disabled = useMouseholeCookie;
-            autoUpdateIpToggle.style.pointerEvents = useMouseholeCookie ? 'none' : '';
-        }
-        if (autoUpdateIpCollapse) {
-            autoUpdateIpCollapse.classList.toggle('d-none', useMouseholeCookie);
-        }
-        if (autoUpdateIpInput) {
-            autoUpdateIpInput.disabled = useMouseholeCookie || !isChecked('ENABLE_DYNAMIC_IP_UPDATE');
-        }
-        const syncMouseholeButton = document.getElementById('sync-mousehole-cookie-button');
-        if (syncMouseholeButton) syncMouseholeButton.disabled = !useMouseholeCookie;
         updateCopyFieldButtons();
-        updateMouseholeIpWarning();
+        updateNetworkSection();
 
         // Upload Check Interval Logic
         const ratioOn = isChecked('AUTO_BUY_UPLOAD_ON_RATIO');
@@ -3338,53 +3254,6 @@ document.addEventListener("DOMContentLoaded", async function () {
             shouldShowAutoOrganizeAdvanced ? advancedSectionCollapse.show() : advancedSectionCollapse.hide();
         }
     }
-
-    function normalizeMouseholeBaseUrl(value) {
-        const raw = String(value || '').trim();
-        if (!raw) return '';
-        const withScheme = raw.includes('://') ? raw : `http://${raw}`;
-        return withScheme.replace(/\/+$/, '');
-    }
-
-    function updateMouseholeLogoSrc() {
-        const logo = document.getElementById('mousehole-settings-logo');
-        const fallbackIcon = document.getElementById('mousehole-settings-logo-fallback');
-        const input = document.getElementById('MOUSEHOLE_API_URL');
-        if (!logo) return;
-
-        const baseUrl = normalizeMouseholeBaseUrl(input?.value || logo.dataset.baseSrc || '');
-        if (!baseUrl) {
-            logo.classList.add('d-none');
-            fallbackIcon?.classList.remove('d-none');
-            return;
-        }
-
-        logo.dataset.logoAttempt = 'instance';
-        logo.classList.remove('d-none');
-        fallbackIcon?.classList.add('d-none');
-        logo.src = `${baseUrl}/logo.svg`;
-    }
-
-    const mouseholeLogo = document.getElementById('mousehole-settings-logo');
-    if (mouseholeLogo) {
-        mouseholeLogo.dataset.baseSrc = normalizeMouseholeBaseUrl(mouseholeLogo.src.replace(/\/logo\.svg$/, ''));
-        mouseholeLogo.addEventListener('error', function () {
-            const fallbackIcon = document.getElementById('mousehole-settings-logo-fallback');
-            if (this.dataset.logoAttempt === 'instance' && this.dataset.fallbackSrc) {
-                this.dataset.logoAttempt = 'github';
-                this.src = this.dataset.fallbackSrc;
-                return;
-            }
-            this.classList.add('d-none');
-            fallbackIcon?.classList.remove('d-none');
-        });
-    }
-
-    const mouseholeUrlInput = document.getElementById('MOUSEHOLE_API_URL');
-    mouseholeUrlInput?.addEventListener('change', updateMouseholeLogoSrc);
-    mouseholeUrlInput?.addEventListener('blur', updateMouseholeLogoSrc);
-    updateMouseholeLogoSrc();
-
 
     ['AUTO_ORGANIZE_ON_ADD', 'AUTO_ORGANIZE_ON_SCHEDULE'].forEach(id => {
         const el = document.getElementById(id);
@@ -3807,12 +3676,9 @@ document.addEventListener("DOMContentLoaded", async function () {
                 showToast(data.message, data.status === 'success' ? 'success' : 'danger');
                 if (data.status === 'success') {
                     captureSettingsSnapshot();
-                    const mouseholeCookieEl = document.getElementById('mousehole-last-cookie');
-                    if (mouseholeCookieEl && data.mousehole_cookie) mouseholeCookieEl.value = data.mousehole_cookie;
-                if (Object.prototype.hasOwnProperty.call(data, 'mousehole_ip')) setMouseholeReportedIp(data.mousehole_ip);
-                updateMamProxyStatusPanel(data.proxy_status);
-                fetchPublicIP();
-                updateCopyFieldButtons();
+                    updateMamProxyStatusPanel(data.proxy_status);
+                    fetchPublicIP();
+                    updateCopyFieldButtons();
                     const catDropdown = document.getElementById('TORRENT_CLIENT_CATEGORY');
                     if (catDropdown) catDropdown.dataset.currentValue = catDropdown.value;
 
@@ -3824,8 +3690,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                     checkSettingsHardcoverConnection();
                     loadMamUserData();
                     const dynamicIpEnabled = document.getElementById('ENABLE_DYNAMIC_IP_UPDATE')?.checked;
-                    const mouseholeEnabled = document.getElementById('USE_MOUSEHOLE_MAM_COOKIE')?.checked;
-                    if (dynamicIpEnabled && !mouseholeEnabled) {
+                    if (dynamicIpEnabled) {
                         setTimeout(() => loadMamUserData(), 3500);
                     }
                 }
@@ -3869,42 +3734,6 @@ document.addEventListener("DOMContentLoaded", async function () {
             this.disabled = false;
             this.innerHTML = originalHtml;
         }
-    });
-
-    document.getElementById('sync-mousehole-cookie-button')?.addEventListener('click', function () {
-        const button = this;
-        const lastCookieEl = document.getElementById('mousehole-last-cookie');
-        button.disabled = true;
-        const originalText = button.textContent;
-        button.textContent = 'Syncing...';
-
-        const payload = {
-            use_mousehole_mam_cookie: document.getElementById('USE_MOUSEHOLE_MAM_COOKIE')?.checked || false,
-            mousehole_api_url: document.getElementById('MOUSEHOLE_API_URL')?.value || ''
-        };
-
-        fetch('/mam/sync_mousehole_cookie', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        })
-            .then(response => response.json().then(data => ({ ok: response.ok, data })))
-            .then(({ ok, data }) => {
-                if (lastCookieEl && data.cookie) lastCookieEl.value = data.cookie;
-                if (Object.prototype.hasOwnProperty.call(data, 'mousehole_ip')) setMouseholeReportedIp(data.mousehole_ip, false);
-                updateCopyFieldButtons();
-                showToast(data.message || (ok ? 'Mousehole cookie synced.' : 'Mousehole cookie sync failed.'), ok ? 'success' : 'danger');
-                if (ok && currentMouseholeIpMismatch()?.shouldWarn) {
-                    setTimeout(() => showMouseholeIpMismatchToast(true), 600);
-                }
-                if (ok) loadMamUserData();
-            })
-            .catch(() => showToast('Error syncing Mousehole cookie.', 'danger'))
-            .finally(() => {
-                button.textContent = originalText;
-                button.disabled = !document.getElementById('USE_MOUSEHOLE_MAM_COOKIE')?.checked;
-                updateCopyFieldButtons();
-            });
     });
 
     // Buy VIP Logic
