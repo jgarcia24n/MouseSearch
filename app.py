@@ -1,5 +1,5 @@
 # app.py - Quart (async) version
-from quart import Quart, request, render_template, Response, jsonify, send_file, g
+from quart import Quart, request, render_template, Response, jsonify, send_file, g, session, redirect, url_for
 import httpx
 import json
 import copy
@@ -8,6 +8,7 @@ import argparse
 import os
 import posixpath
 import time
+import base64
 import hashlib
 import collections
 import math
@@ -867,6 +868,32 @@ async def _track_request_start():
     g.request_id = incoming_request_id[:64] if incoming_request_id else uuid.uuid4().hex[:12]
 
 
+@app.before_request
+async def _require_auth():
+    if not AUTH_PASSWORD:
+        return
+    if request.path in ('/login', '/logout') or request.path.startswith('/static/'):
+        return
+    # HTTP Basic Auth — if header present, validate and never fall through to redirect
+    auth_header = request.headers.get('Authorization', '')
+    if auth_header.lower().startswith('basic '):
+        try:
+            credentials = base64.b64decode(auth_header.split(' ', 1)[1]).decode('utf-8')
+            username, _, password = credentials.partition(':')
+        except Exception:
+            username = password = ''
+        if username == AUTH_USERNAME and password == AUTH_PASSWORD:
+            return
+        return Response('Unauthorized', 401, {'WWW-Authenticate': 'Basic realm="MouseSearch"'})
+    # Session cookie for browser clients
+    if session.get('authenticated'):
+        return
+    # Not authenticated
+    if request.accept_mimetypes.best_match(['text/html', 'application/json']) == 'application/json':
+        return jsonify({"error": "Unauthorized"}), 401
+    return redirect(url_for('login', next=request.path))
+
+
 @app.after_request
 async def _log_http_request(response):
     request_id = getattr(g, "request_id", uuid.uuid4().hex[:12])
@@ -1018,6 +1045,10 @@ ENV_ONLY_CONFIG_KEYS = {"QBITTORRENT_VERIFY_WEBUI_CERTIFICATE"}
 DATA_PATH = Path(os.getenv("DATA_PATH", FALLBACK_CONFIG["DATA_PATH"])).resolve()
 DATA_PATH.mkdir(parents=True, exist_ok=True)
 AUTOSUGGEST_CACHE_DB_PATH = DATA_PATH / "autosuggest_cache.sqlite3"
+
+# Authentication (env-only; empty password disables auth)
+AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")
+AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "")
 
 UPLOAD_CREDIT_COST_PER_GB = 500
 UPLOAD_CREDIT_MIN_GB = 50
@@ -5341,6 +5372,27 @@ async def mam_search():
     if display_results and hardcover_enrichment_is_active():
         initialize_hardcover_enrichment_batch(search_id, copy.deepcopy(display_results))
     return rendered_results
+
+
+@app.route('/login', methods=['GET', 'POST'])
+async def login():
+    if not AUTH_PASSWORD:
+        return redirect(url_for('index'))
+    if request.method == 'POST':
+        form = await request.form
+        if form.get('username') == AUTH_USERNAME and form.get('password') == AUTH_PASSWORD:
+            session['authenticated'] = True
+            next_url = request.args.get('next') or url_for('index')
+            return redirect(next_url)
+        return await render_template('login.html', error='Invalid username or password'), 401
+    return await render_template('login.html')
+
+
+@app.route('/logout')
+async def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
 
 @app.route("/")
 async def index():
