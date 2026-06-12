@@ -7282,6 +7282,41 @@ document.addEventListener("DOMContentLoaded", async function () {
             if (mainInput) mainInput.value = this.value;
         });
     }
+
+    // --- E. Clear Button Logic ---
+    const mainQueryInput = document.getElementById('query');
+    const queryClearBtn = document.getElementById('query-clear');
+    const navClearBtn = document.getElementById('nav-search-clear');
+
+    function syncClearButtons() {
+        if (queryClearBtn) queryClearBtn.classList.toggle('d-none', !mainQueryInput || !mainQueryInput.value);
+        if (navClearBtn) navClearBtn.classList.toggle('d-none', !navSearchInput || !navSearchInput.value);
+    }
+
+    if (mainQueryInput) {
+        mainQueryInput.addEventListener('input', syncClearButtons);
+        syncClearButtons();
+    }
+
+    if (queryClearBtn) {
+        queryClearBtn.addEventListener('click', () => {
+            mainQueryInput.value = '';
+            mainQueryInput.dispatchEvent(new Event('input'));
+            mainQueryInput.focus();
+        });
+    }
+
+    if (navSearchInput) {
+        navSearchInput.addEventListener('input', syncClearButtons);
+    }
+
+    if (navClearBtn) {
+        navClearBtn.addEventListener('click', () => {
+            navSearchInput.value = '';
+            navSearchInput.dispatchEvent(new Event('input'));
+            navSearchInput.focus();
+        });
+    }
 });
 
 // ============================================================
