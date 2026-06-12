@@ -4997,22 +4997,19 @@ async def hardcover_update_user_book_status():
     })
 
 
-@app.route('/mam/search', methods=['GET'])
-async def mam_search():
-    if not await login_mam(): 
-        return await render_template(
-            "partials/results.html",
-            error_message="Login failed",
-            RESULTS_DISPLAY_FIELDS=app.config.get(
-                "RESULTS_DISPLAY_FIELDS",
-                FALLBACK_CONFIG["RESULTS_DISPLAY_FIELDS"]
-            ),
-        )
+async def _mam_search_data():
+    """
+    Shared search logic for /mam/search and /api/mam/search.
+    Returns (data_dict, error_message). Exactly one will be non-None.
+    data_dict keys: results, search_id, client_connected, categories, is_vip_active, params, query.
+    """
+    if not await login_mam():
+        return None, "Login failed"
+
     query = request.args.get("query", "").strip()
     search_started_at = time.monotonic()
     search_id = uuid.uuid4().hex[:12]
 
-    # Used by templates to decide whether VIP Freeleech applies (fl_vip).
     is_vip_active = False
     try:
         user_data = await fetch_mam_json_load()
@@ -5253,37 +5250,52 @@ async def mam_search():
             f"scope={params.get('tor[searchIn]', 'torrents')} duration_ms={search_duration_ms:.1f}"
         )
 
-        rendered_results = await render_template(
-            "partials/results.html",
-            results=display_results,
-            search_id=search_id,
-            HARDCOVER_ENRICHMENT_ACTIVE=hardcover_enrichment_is_active(),
-            CLIENT_STATUS="CONNECTED" if client_connected else "NOT CONNECTED",
-            categories=categories,
-            TORRENT_CLIENT_CATEGORY=app.config.get("TORRENT_CLIENT_CATEGORY", ""),
-            DESTINATION_PATHS=app.config.get("DESTINATION_PATHS", FALLBACK_CONFIG["DESTINATION_PATHS"]),
-            TYPE_SPECIFIC_TORRENT_CATEGORIES=app.config.get(
-                "TYPE_SPECIFIC_TORRENT_CATEGORIES",
-                FALLBACK_CONFIG["TYPE_SPECIFIC_TORRENT_CATEGORIES"],
-            ),
-            IS_VIP_ACTIVE=is_vip_active,
-            RESULTS_DISPLAY_FIELDS=app.config.get(
-                "RESULTS_DISPLAY_FIELDS",
-                FALLBACK_CONFIG["RESULTS_DISPLAY_FIELDS"]
-            ),
-        )
-        if display_results and hardcover_enrichment_is_active():
-            initialize_hardcover_enrichment_batch(search_id, copy.deepcopy(display_results))
-        return rendered_results
+        return {
+            "results": display_results,
+            "search_id": search_id,
+            "client_connected": client_connected,
+            "categories": categories,
+            "is_vip_active": is_vip_active,
+            "params": params,
+            "query": query,
+        }, None
+
     except Exception as e:
         error_message = format_mam_search_error(e)
         app.logger.error(
             f"[SEARCH] Failed query_len={len(query)}: {error_message}",
             exc_info=True,
         )
+        return None, error_message
+
+
+_API_JSON_STRING_FIELDS = ("categories", "mediainfo", "ownership", "series_info")
+
+def _parse_api_result(item: dict) -> dict:
+    out = dict(item)
+    for field in _API_JSON_STRING_FIELDS:
+        val = out.get(field)
+        if isinstance(val, str) and val.strip():
+            try:
+                out[field] = json.loads(val)
+            except (json.JSONDecodeError, ValueError):
+                pass
+    return out
+
+
+@app.route('/mam/search', methods=['GET'])
+async def mam_search():
+    wants_json = request.accept_mimetypes.best_match(
+        ["application/json", "text/html"]
+    ) == "application/json"
+    data, error = await _mam_search_data()
+
+    if error:
+        if wants_json:
+            return jsonify({"error": error}), 400
         return await render_template(
             "partials/results.html",
-            error_message=error_message,
+            error_message=error,
             DESTINATION_PATHS=app.config.get("DESTINATION_PATHS", FALLBACK_CONFIG["DESTINATION_PATHS"]),
             TORRENT_CLIENT_CATEGORY=app.config.get("TORRENT_CLIENT_CATEGORY", ""),
             TYPE_SPECIFIC_TORRENT_CATEGORIES=app.config.get(
@@ -5295,6 +5307,41 @@ async def mam_search():
                 FALLBACK_CONFIG["RESULTS_DISPLAY_FIELDS"]
             ),
         )
+
+    display_results = data["results"]
+    search_id = data["search_id"]
+
+    if wants_json:
+        if display_results and hardcover_enrichment_is_active():
+            initialize_hardcover_enrichment_batch(search_id, copy.deepcopy(display_results))
+        return jsonify({
+            "results": [_parse_api_result(r) for r in display_results],
+            "search_id": search_id,
+            "total": len(display_results),
+        })
+
+    rendered_results = await render_template(
+        "partials/results.html",
+        results=display_results,
+        search_id=search_id,
+        HARDCOVER_ENRICHMENT_ACTIVE=hardcover_enrichment_is_active(),
+        CLIENT_STATUS="CONNECTED" if data["client_connected"] else "NOT CONNECTED",
+        categories=data["categories"],
+        TORRENT_CLIENT_CATEGORY=app.config.get("TORRENT_CLIENT_CATEGORY", ""),
+        DESTINATION_PATHS=app.config.get("DESTINATION_PATHS", FALLBACK_CONFIG["DESTINATION_PATHS"]),
+        TYPE_SPECIFIC_TORRENT_CATEGORIES=app.config.get(
+            "TYPE_SPECIFIC_TORRENT_CATEGORIES",
+            FALLBACK_CONFIG["TYPE_SPECIFIC_TORRENT_CATEGORIES"],
+        ),
+        IS_VIP_ACTIVE=data["is_vip_active"],
+        RESULTS_DISPLAY_FIELDS=app.config.get(
+            "RESULTS_DISPLAY_FIELDS",
+            FALLBACK_CONFIG["RESULTS_DISPLAY_FIELDS"]
+        ),
+    )
+    if display_results and hardcover_enrichment_is_active():
+        initialize_hardcover_enrichment_batch(search_id, copy.deepcopy(display_results))
+    return rendered_results
 
 @app.route("/")
 async def index():
