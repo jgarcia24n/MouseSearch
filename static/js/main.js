@@ -16,6 +16,7 @@ const hardcoverEnrichmentObservers = new Map();
 const hardcoverEnrichmentQueueRequests = new Map();
 const HARDCOVER_LAZY_BUFFER_ROWS = 2;
 let lastClientStatus = null;
+let torrentClientAvailable = true;
 let lastPerformedQuery = null;
 window.currentVipUntil = null;
 window.currentBonusPoints = 0;
@@ -2004,6 +2005,7 @@ function initializeEventStream() {
                     if (data.display_name && clientTypeDisplay) {
                         clientTypeDisplay.textContent = data.display_name;
                     }
+                    setDownloadButtonsEnabled(isConnected);
                     break;
                 case 'mam-stats':
                     const userData = data.data || {};
@@ -2374,6 +2376,7 @@ function checkClientStatus() {
                 clientTypeDisplay.textContent = data.display_name;
             }
 
+            setDownloadButtonsEnabled(isSuccess);
             if (isSuccess) refreshCategories();
         })
         .catch(error => {
@@ -2383,7 +2386,36 @@ function checkClientStatus() {
                 statusMessage.className = "small text-danger mt-1";
             }
             if (statusIconSpan) statusIconSpan.innerHTML = redXIcon;
+            setDownloadButtonsEnabled(false);
         });
+}
+
+function setDownloadButtonsEnabled(enabled) {
+    torrentClientAvailable = enabled;
+    const tooltip = 'Torrent client is not connected.';
+    document.querySelectorAll('.add-to-client-button').forEach(btn => {
+        btn.disabled = !enabled;
+        enabled ? btn.removeAttribute('title') : (btn.title = tooltip);
+    });
+    const detailBtn = document.getElementById('detail-download-btn');
+    if (detailBtn) {
+        detailBtn.disabled = !enabled;
+        enabled ? detailBtn.removeAttribute('title') : (detailBtn.title = tooltip);
+    }
+    document.querySelectorAll('.category-dropdown').forEach(sel => {
+        sel.disabled = !enabled;
+    });
+}
+
+function setSearchEnabled(enabled) {
+    const btn = document.getElementById('searchButton');
+    if (!btn) return;
+    btn.disabled = !enabled;
+    if (!enabled) {
+        btn.title = 'MAM is not connected. Check your session cookie in Settings.';
+    } else {
+        btn.removeAttribute('title');
+    }
 }
 
 function refreshCategories() {
@@ -2394,7 +2426,7 @@ function refreshCategories() {
             const defaultCategory = document.getElementById('TORRENT_CLIENT_CATEGORY')?.value || '';
 
             resultDropdowns.forEach(dropdown => {
-                dropdown.disabled = false; // <--- ADD THIS
+                dropdown.disabled = !torrentClientAvailable;
                 const currentVal = dropdown.value;
                 const preferredDefault = getPreferredClientCategoryForMainCat(dropdown.dataset.mainCat || '');
                 dropdown.innerHTML = '<option value="">Category</option>';
@@ -2538,6 +2570,7 @@ function loadMamUserData() {
             });
             hideMamAuthFailurePrompt();
             hideMamNotConfiguredPrompt();
+            setSearchEnabled(true);
         })
         .catch(error => {
             const statusSpan = document.getElementById('mam-status');
@@ -2552,6 +2585,7 @@ function loadMamUserData() {
                 statusMessage.className = 'small text-danger mt-1';
             }
             if (statusIconSpan) statusIconSpan.innerHTML = redXIcon;
+            setSearchEnabled(false);
 
             document.getElementById('mam-username').textContent = 'N/A';
             document.getElementById('mam-class').textContent = 'N/A';
@@ -6974,7 +7008,12 @@ document.addEventListener("DOMContentLoaded", async function () {
 
         // Reset button state in case a previous book download changed it (e.g. "Added!" + disabled)
         if (dlBtn) {
-            dlBtn.disabled = false;
+            dlBtn.disabled = !torrentClientAvailable;
+            if (torrentClientAvailable) {
+                dlBtn.removeAttribute('title');
+            } else {
+                dlBtn.title = 'Torrent client is not connected.';
+            }
             dlBtn.innerHTML = '<i class="bi bi-play-fill me-1"></i> Download';
         }
 

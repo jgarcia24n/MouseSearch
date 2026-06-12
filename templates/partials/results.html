@@ -196,7 +196,7 @@
         </div>
 
         <div class="col-lg-3 d-none d-lg-block actions-column-adaptive p-3 d-flex flex-column justify-content-center">
-            {% if result.download_link %}
+            {% if result.download_link and (not auth_enabled or (current_user and current_user.can_download)) %}
             <div class="d-grid gap-2" style="width:100%" {% if CLIENT_STATUS !='CONNECTED'
                 %}title="Torrent client is not connected." {% endif %}>
 

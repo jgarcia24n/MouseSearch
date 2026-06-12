@@ -25,6 +25,7 @@ from httpx import Limits, Timeout, AsyncHTTPTransport
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from urllib.parse import parse_qsl, unquote, urlparse
+from werkzeug.security import generate_password_hash, check_password_hash
 
 import re
 from pathlib import Path
@@ -870,11 +871,14 @@ async def _track_request_start():
 
 @app.before_request
 async def _require_auth():
+    # Auth disabled — grant full access, still set current_user for templates
     if not AUTH_PASSWORD:
+        g.current_user = _admin_user_dict()
         return
-    if request.path in ('/login', '/logout') or request.path.startswith('/static/'):
+    public_paths = ('/login', '/logout')
+    if request.path in public_paths or request.path.startswith('/static/'):
         return
-    # HTTP Basic Auth — if header present, validate and never fall through to redirect
+    # HTTP Basic Auth (API/curl clients) — only the env admin account
     auth_header = request.headers.get('Authorization', '')
     if auth_header.lower().startswith('basic '):
         try:
@@ -883,10 +887,12 @@ async def _require_auth():
         except Exception:
             username = password = ''
         if username == AUTH_USERNAME and password == AUTH_PASSWORD:
+            g.current_user = _admin_user_dict()
             return
         return Response('Unauthorized', 401, {'WWW-Authenticate': 'Basic realm="MouseSearch"'})
     # Session cookie for browser clients
-    if session.get('authenticated'):
+    if session.get('authenticated') and 'user' in session:
+        g.current_user = session['user']
         return
     # Not authenticated
     if request.accept_mimetypes.best_match(['text/html', 'application/json']) == 'application/json':
@@ -1045,10 +1051,166 @@ ENV_ONLY_CONFIG_KEYS = {"QBITTORRENT_VERIFY_WEBUI_CERTIFICATE"}
 DATA_PATH = Path(os.getenv("DATA_PATH", FALLBACK_CONFIG["DATA_PATH"])).resolve()
 DATA_PATH.mkdir(parents=True, exist_ok=True)
 AUTOSUGGEST_CACHE_DB_PATH = DATA_PATH / "autosuggest_cache.sqlite3"
+USERS_DB_PATH = DATA_PATH / "users.sqlite3"
+
+
+# ── User database ────────────────────────────────────────────────────────────
+
+def _init_users_db():
+    con = sqlite3.connect(str(USERS_DB_PATH))
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            username    TEXT    UNIQUE NOT NULL COLLATE NOCASE,
+            password_hash TEXT  NOT NULL,
+            can_search  INTEGER NOT NULL DEFAULT 1,
+            can_download INTEGER NOT NULL DEFAULT 1,
+            can_settings INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT    NOT NULL,
+            updated_at  TEXT    NOT NULL
+        )
+    """)
+    con.commit()
+    con.close()
+
+
+_init_users_db()
+
+
+def _db_row_to_user(row) -> dict:
+    d = dict(row)
+    return {
+        "id": d["id"],
+        "username": d["username"],
+        "is_admin": False,
+        "can_search": bool(d["can_search"]),
+        "can_download": bool(d["can_download"]),
+        "can_settings": bool(d["can_settings"]),
+        "created_at": d["created_at"],
+        "updated_at": d["updated_at"],
+    }
+
+
+def _db_get_user_by_username(username: str):
+    con = sqlite3.connect(str(USERS_DB_PATH))
+    con.row_factory = sqlite3.Row
+    row = con.execute(
+        "SELECT * FROM users WHERE username = ? COLLATE NOCASE", (username,)
+    ).fetchone()
+    con.close()
+    return _db_row_to_user(row) if row else None
+
+
+def _db_get_user_by_id(user_id: int):
+    con = sqlite3.connect(str(USERS_DB_PATH))
+    con.row_factory = sqlite3.Row
+    row = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    con.close()
+    return _db_row_to_user(row) if row else None
+
+
+def _db_get_all_users():
+    con = sqlite3.connect(str(USERS_DB_PATH))
+    con.row_factory = sqlite3.Row
+    rows = con.execute("SELECT * FROM users ORDER BY username COLLATE NOCASE").fetchall()
+    con.close()
+    return [_db_row_to_user(r) for r in rows]
+
+
+def _db_create_user(username, password, can_search, can_download, can_settings) -> bool:
+    now = datetime.now(timezone.utc).isoformat()
+    ph = generate_password_hash(password)
+    con = sqlite3.connect(str(USERS_DB_PATH))
+    try:
+        con.execute(
+            "INSERT INTO users (username, password_hash, can_search, can_download, can_settings, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+            (username, ph, int(can_search), int(can_download), int(can_settings), now, now),
+        )
+        con.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        con.close()
+
+
+def _db_update_user(user_id, can_search, can_download, can_settings, password=None):
+    now = datetime.now(timezone.utc).isoformat()
+    con = sqlite3.connect(str(USERS_DB_PATH))
+    if password:
+        ph = generate_password_hash(password)
+        con.execute(
+            "UPDATE users SET can_search=?, can_download=?, can_settings=?, password_hash=?, updated_at=? WHERE id=?",
+            (int(can_search), int(can_download), int(can_settings), ph, now, user_id),
+        )
+    else:
+        con.execute(
+            "UPDATE users SET can_search=?, can_download=?, can_settings=?, updated_at=? WHERE id=?",
+            (int(can_search), int(can_download), int(can_settings), now, user_id),
+        )
+    con.commit()
+    con.close()
+
+
+def _db_change_password(user_id, new_password):
+    now = datetime.now(timezone.utc).isoformat()
+    ph = generate_password_hash(new_password)
+    con = sqlite3.connect(str(USERS_DB_PATH))
+    con.execute("UPDATE users SET password_hash=?, updated_at=? WHERE id=?", (ph, now, user_id))
+    con.commit()
+    con.close()
+
+
+def _db_delete_user(user_id):
+    con = sqlite3.connect(str(USERS_DB_PATH))
+    con.execute("DELETE FROM users WHERE id=?", (user_id,))
+    con.commit()
+    con.close()
+
+
+def _db_verify_password(username, password) -> dict | None:
+    """Returns user dict if credentials are valid, else None."""
+    con = sqlite3.connect(str(USERS_DB_PATH))
+    con.row_factory = sqlite3.Row
+    row = con.execute(
+        "SELECT * FROM users WHERE username = ? COLLATE NOCASE", (username,)
+    ).fetchone()
+    con.close()
+    if row and check_password_hash(row["password_hash"], password):
+        return _db_row_to_user(row)
+    return None
+
 
 # Authentication (env-only; empty password disables auth)
 AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")
 AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "")
+
+
+def _admin_user_dict() -> dict:
+    return {
+        "id": None,
+        "username": AUTH_USERNAME,
+        "is_admin": True,
+        "can_search": True,
+        "can_download": True,
+        "can_settings": True,
+    }
+
+
+def _has_perm(perm: str) -> bool:
+    user = getattr(g, "current_user", None)
+    if not user:
+        return False
+    return bool(user.get("is_admin") or user.get(perm))
+
+
+@app.context_processor
+async def _inject_user_context():
+    return {
+        "current_user": getattr(g, "current_user", None),
+        "auth_enabled": bool(AUTH_PASSWORD),
+    }
+
 
 UPLOAD_CREDIT_COST_PER_GB = 500
 UPLOAD_CREDIT_MIN_GB = 50
@@ -4038,7 +4200,8 @@ async def client_add_torrent():
     Returns:
         Flask Response: JSON response indicating success, error, or insufficient buffer, with appropriate HTTP status codes.
     """
-
+    if not _has_perm('can_download'):
+        return jsonify({'error': 'Permission denied'}), 403
     if not torrent_client:
         return jsonify({'error': 'Client not initialized'}), 500
     
@@ -5318,6 +5481,15 @@ async def mam_search():
     wants_json = request.accept_mimetypes.best_match(
         ["text/html", "application/json"]
     ) == "application/json"
+    if not _has_perm('can_search'):
+        if wants_json:
+            return jsonify({"error": "Permission denied"}), 403
+        return await render_template(
+            "partials/results.html",
+            error_message="You do not have permission to search.",
+            DESTINATION_PATHS=app.config.get("DESTINATION_PATHS", FALLBACK_CONFIG["DESTINATION_PATHS"]),
+            TORRENT_CLIENT_CATEGORY=app.config.get("TORRENT_CLIENT_CATEGORY", ""),
+        ), 403
     data, error = await _mam_search_data()
 
     if error:
@@ -5380,9 +5552,19 @@ async def login():
         return redirect(url_for('index'))
     if request.method == 'POST':
         form = await request.form
-        if form.get('username') == AUTH_USERNAME and form.get('password') == AUTH_PASSWORD:
+        username = (form.get('username') or '').strip()
+        password = form.get('password') or ''
+        next_url = request.args.get('next') or url_for('index')
+        # Check env admin first
+        if username == AUTH_USERNAME and password == AUTH_PASSWORD:
             session['authenticated'] = True
-            next_url = request.args.get('next') or url_for('index')
+            session['user'] = _admin_user_dict()
+            return redirect(next_url)
+        # Check DB users
+        user = await asyncio.to_thread(_db_verify_password, username, password)
+        if user:
+            session['authenticated'] = True
+            session['user'] = user
             return redirect(next_url)
         return await render_template('login.html', error='Invalid username or password'), 401
     return await render_template('login.html')
@@ -5392,6 +5574,114 @@ async def login():
 async def logout():
     session.clear()
     return redirect(url_for('login'))
+
+
+# ── Admin: user management ────────────────────────────────────────────────────
+
+def _admin_only():
+    user = getattr(g, 'current_user', None)
+    if not user or not user.get('is_admin'):
+        if request.accept_mimetypes.best_match(['text/html', 'application/json']) == 'application/json':
+            return jsonify({'error': 'Admin access required'}), 403
+        return 'Admin access required', 403
+    return None
+
+
+@app.route('/admin/users')
+async def admin_users():
+    err = _admin_only()
+    if err:
+        return err
+    users = await asyncio.to_thread(_db_get_all_users)
+    return await render_template('admin/users.html', users=users)
+
+
+@app.route('/admin/users/new', methods=['GET', 'POST'])
+async def admin_users_new():
+    err = _admin_only()
+    if err:
+        return err
+    if request.method == 'POST':
+        form = await request.form
+        username = (form.get('username') or '').strip()
+        password = form.get('password') or ''
+        if not username or not password:
+            return await render_template(
+                'admin/user_form.html', user=None,
+                error='Username and password are required'
+            )
+        ok = await asyncio.to_thread(
+            _db_create_user, username, password,
+            'can_search' in form, 'can_download' in form,
+            'can_settings' in form,
+        )
+        if not ok:
+            return await render_template(
+                'admin/user_form.html', user=None,
+                error=f'Username "{username}" already exists'
+            )
+        return redirect(url_for('admin_users'))
+    return await render_template('admin/user_form.html', user=None)
+
+
+@app.route('/admin/users/<int:user_id>', methods=['GET', 'POST'])
+async def admin_users_edit(user_id):
+    err = _admin_only()
+    if err:
+        return err
+    user = await asyncio.to_thread(_db_get_user_by_id, user_id)
+    if not user:
+        return 'User not found', 404
+    if request.method == 'POST':
+        form = await request.form
+        password = (form.get('password') or '').strip() or None
+        await asyncio.to_thread(
+            _db_update_user, user_id,
+            'can_search' in form, 'can_download' in form,
+            'can_settings' in form,
+            password,
+        )
+        # Refresh session if the edited user is the currently logged-in user
+        if session.get('user', {}).get('id') == user_id:
+            updated = await asyncio.to_thread(_db_get_user_by_id, user_id)
+            if updated:
+                session['user'] = updated
+        return redirect(url_for('admin_users'))
+    return await render_template('admin/user_form.html', user=user)
+
+
+@app.route('/admin/users/<int:user_id>/delete', methods=['POST'])
+async def admin_users_delete(user_id):
+    err = _admin_only()
+    if err:
+        return err
+    await asyncio.to_thread(_db_delete_user, user_id)
+    return redirect(url_for('admin_users'))
+
+
+# ── Account: self-service password change ─────────────────────────────────────
+
+@app.route('/account', methods=['GET', 'POST'])
+async def account():
+    user = getattr(g, 'current_user', None)
+    # Admin account is managed via env vars, not here
+    if not user or user.get('is_admin'):
+        return redirect(url_for('index'))
+    if request.method == 'POST':
+        form = await request.form
+        current_pw = form.get('current_password') or ''
+        new_pw = form.get('new_password') or ''
+        confirm_pw = form.get('confirm_password') or ''
+        if new_pw != confirm_pw:
+            return await render_template('account.html', user=user, error='Passwords do not match')
+        if len(new_pw) < 8:
+            return await render_template('account.html', user=user, error='New password must be at least 8 characters')
+        db_user = await asyncio.to_thread(_db_verify_password, user['username'], current_pw)
+        if not db_user:
+            return await render_template('account.html', user=user, error='Current password is incorrect')
+        await asyncio.to_thread(_db_change_password, user['id'], new_pw)
+        return await render_template('account.html', user=user, success='Password updated successfully')
+    return await render_template('account.html', user=user)
 
 
 @app.route("/")
@@ -5680,6 +5970,8 @@ async def proxy_thumbnail():
 
 @app.route("/api/settings", methods=["GET", "POST"])
 async def api_settings():
+    if request.method == "POST" and not _has_perm('can_settings'):
+        return jsonify({"error": "Permission denied"}), 403
     if request.method == "GET":
         env_values = read_env_values()
         default_template = env_values.get("DEFAULT_RELATIVE_PATH_TEMPLATE") or FALLBACK_CONFIG["REL_PATH_TEMPLATE"]
@@ -5708,6 +6000,8 @@ async def api_settings():
 
 @app.route("/update_settings", methods=["POST"])
 async def update_settings():
+    if not _has_perm('can_settings'):
+        return jsonify({"error": "Permission denied"}), 403
     form = await request.form
     config_to_update = app.config.copy()
     previous_mam_id = normalize_mam_cookie_value(app.config.get("MAM_ID"))

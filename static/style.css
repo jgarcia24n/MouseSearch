@@ -38,8 +38,8 @@ body {
        ONLY on desktop so content doesn't get hidden behind the bar. 
        If you prefer the purple header to still go behind the bar on desktop,
        remove this block. */
-    body {
-        padding-top: 60px; 
+    body.has-fixed-nav {
+        padding-top: 60px;
     }
 }
 
