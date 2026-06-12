@@ -4999,7 +4999,6 @@ async def hardcover_update_user_book_status():
 
 async def _mam_search_data():
     """
-    Shared search logic for /mam/search and /api/mam/search.
     Returns (data_dict, error_message). Exactly one will be non-None.
     data_dict keys: results, search_id, client_connected, categories, is_vip_active, params, query.
     """
@@ -5286,7 +5285,7 @@ def _parse_api_result(item: dict) -> dict:
 @app.route('/mam/search', methods=['GET'])
 async def mam_search():
     wants_json = request.accept_mimetypes.best_match(
-        ["application/json", "text/html"]
+        ["text/html", "application/json"]
     ) == "application/json"
     data, error = await _mam_search_data()
 
