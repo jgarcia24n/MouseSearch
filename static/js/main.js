@@ -2530,12 +2530,13 @@ function loadMamUserData() {
                 updateCopyFieldButtons();
             }
 
-            document.getElementById('mam-username').textContent = data.username || 'N/A';
-            document.getElementById('mam-class').textContent = data.classname || 'N/A';
-            document.getElementById('mam-uploaded').textContent = data.uploaded || 'N/A';
-            document.getElementById('mam-downloaded').textContent = data.downloaded || 'N/A';
-            document.getElementById('mam-ratio').textContent = data.ratio || 'N/A';
-            document.getElementById('mam-bonus').textContent = data.seedbonus_formatted || 'N/A';
+            const _setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+            _setText('mam-username', data.username || 'N/A');
+            _setText('mam-class', data.classname || 'N/A');
+            _setText('mam-uploaded', data.uploaded || 'N/A');
+            _setText('mam-downloaded', data.downloaded || 'N/A');
+            _setText('mam-ratio', data.ratio || 'N/A');
+            _setText('mam-bonus', data.seedbonus_formatted || 'N/A');
 
             window.currentVipUntil = data.vip_until;
             window.currentBonusPoints = parseFloat(data.seedbonus || 0);
@@ -2587,12 +2588,13 @@ function loadMamUserData() {
             if (statusIconSpan) statusIconSpan.innerHTML = redXIcon;
             setSearchEnabled(false);
 
-            document.getElementById('mam-username').textContent = 'N/A';
-            document.getElementById('mam-class').textContent = 'N/A';
-            document.getElementById('mam-uploaded').textContent = 'N/A';
-            document.getElementById('mam-downloaded').textContent = 'N/A';
-            document.getElementById('mam-ratio').textContent = 'N/A';
-            document.getElementById('mam-bonus').textContent = 'N/A';
+            const _setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+            _setText('mam-username', 'N/A');
+            _setText('mam-class', 'N/A');
+            _setText('mam-uploaded', 'N/A');
+            _setText('mam-downloaded', 'N/A');
+            _setText('mam-ratio', 'N/A');
+            _setText('mam-bonus', 'N/A');
             window.currentVipUntil = null;
             window.currentBonusPoints = 0;
             window.isVipActive = false;

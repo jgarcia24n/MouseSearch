@@ -5609,6 +5609,8 @@ async def admin_users_new():
         username = (form.get('username') or '').strip()
         password = form.get('password') or ''
         if not username or not password:
+            if request.accept_mimetypes.best_match(['text/html', 'application/json']) == 'application/json':
+                return jsonify({'ok': False, 'error': 'Username and password are required'}), 400
             return await render_template(
                 'admin/user_form.html', user=None,
                 error='Username and password are required'
@@ -5619,10 +5621,14 @@ async def admin_users_new():
             'can_settings' in form,
         )
         if not ok:
+            if request.accept_mimetypes.best_match(['text/html', 'application/json']) == 'application/json':
+                return jsonify({'ok': False, 'error': f'Username "{username}" already exists'}), 409
             return await render_template(
                 'admin/user_form.html', user=None,
                 error=f'Username "{username}" already exists'
             )
+        if request.accept_mimetypes.best_match(['text/html', 'application/json']) == 'application/json':
+            return jsonify({'ok': True}), 201
         return redirect(url_for('admin_users'))
     return await render_template('admin/user_form.html', user=None)
 
@@ -5649,7 +5655,11 @@ async def admin_users_edit(user_id):
             updated = await asyncio.to_thread(_db_get_user_by_id, user_id)
             if updated:
                 session['user'] = updated
+        if request.accept_mimetypes.best_match(['text/html', 'application/json']) == 'application/json':
+            return jsonify({'ok': True})
         return redirect(url_for('admin_users'))
+    if request.accept_mimetypes.best_match(['text/html', 'application/json']) == 'application/json':
+        return jsonify(user)
     return await render_template('admin/user_form.html', user=user)
 
 
@@ -5659,6 +5669,8 @@ async def admin_users_delete(user_id):
     if err:
         return err
     await asyncio.to_thread(_db_delete_user, user_id)
+    if request.accept_mimetypes.best_match(['text/html', 'application/json']) == 'application/json':
+        return jsonify({'ok': True})
     return redirect(url_for('admin_users'))
 
 
@@ -5675,14 +5687,19 @@ async def account():
         current_pw = form.get('current_password') or ''
         new_pw = form.get('new_password') or ''
         confirm_pw = form.get('confirm_password') or ''
+        wants_json = request.accept_mimetypes.best_match(['text/html', 'application/json']) == 'application/json'
         if new_pw != confirm_pw:
+            if wants_json: return jsonify({'ok': False, 'error': 'Passwords do not match'}), 400
             return await render_template('account.html', user=user, error='Passwords do not match')
         if len(new_pw) < 8:
+            if wants_json: return jsonify({'ok': False, 'error': 'New password must be at least 8 characters'}), 400
             return await render_template('account.html', user=user, error='New password must be at least 8 characters')
         db_user = await asyncio.to_thread(_db_verify_password, user['username'], current_pw)
         if not db_user:
+            if wants_json: return jsonify({'ok': False, 'error': 'Current password is incorrect'}), 401
             return await render_template('account.html', user=user, error='Current password is incorrect')
         await asyncio.to_thread(_db_change_password, user['id'], new_pw)
+        if wants_json: return jsonify({'ok': True})
         return await render_template('account.html', user=user, success='Password updated successfully')
     return await render_template('account.html', user=user)
 

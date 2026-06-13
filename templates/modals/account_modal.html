@@ -1,0 +1,79 @@
+{% if auth_enabled and current_user and not current_user.is_admin %}
+<div class="modal fade" id="accountModal" tabindex="-1" aria-labelledby="accountModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-fullscreen">
+    <div class="modal-content bg-body">
+
+      <div class="modal-header border-0 position-absolute w-100 p-4" style="z-index: 1050; background: transparent;">
+        <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="modal" aria-label="Close"
+          style="filter: invert(1); opacity: 0.8;"></button>
+      </div>
+
+      <div class="modal-body p-0 overflow-y-auto custom-scrollbar">
+        <div class="container py-5 pt-md-4 pb-md-5" style="max-width: 480px;">
+
+          <div class="mb-4 mt-3">
+            <h4 class="mb-0 fw-bold"><i class="bi bi-person-circle me-2 text-primary"></i>My Account</h4>
+            <p class="text-body-secondary small mb-0">Logged in as <strong>{{ current_user.username }}</strong></p>
+          </div>
+
+          <div class="card shadow-sm mb-4">
+            <div class="card-header fw-semibold">
+              <i class="bi bi-shield-check me-2 text-secondary"></i>Permissions
+            </div>
+            <div class="card-body">
+              <div class="row row-cols-2 g-2">
+                {% for label, perm in [('Search', 'can_search'), ('Download', 'can_download'), ('Settings', 'can_settings')] %}
+                <div class="col">
+                  <div class="d-flex align-items-center gap-2 small">
+                    {% if current_user[perm] %}
+                    <i class="bi bi-check-circle-fill text-success"></i>
+                    {% else %}
+                    <i class="bi bi-dash-circle text-secondary opacity-50"></i>
+                    {% endif %}
+                    <span class="{{ '' if current_user[perm] else 'text-body-secondary' }}">{{ label }}</span>
+                  </div>
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+
+          <div class="card shadow-sm">
+            <div class="card-header fw-semibold">
+              <i class="bi bi-key me-2 text-secondary"></i>Change Password
+            </div>
+            <div class="card-body">
+              <div id="account-pw-error" class="alert alert-danger py-2 small d-none"></div>
+              <div id="account-pw-success" class="alert alert-success py-2 small d-none"></div>
+              <form id="account-pw-form" onsubmit="accountSubmitPassword(event)">
+                <div class="mb-3">
+                  <label class="form-label" for="acct-current-pw">Current Password</label>
+                  <input class="form-control" id="acct-current-pw" name="current_password"
+                         type="password" autocomplete="current-password" required>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label" for="acct-new-pw">New Password</label>
+                  <input class="form-control" id="acct-new-pw" name="new_password"
+                         type="password" autocomplete="new-password" required minlength="8">
+                  <div class="form-text">Minimum 8 characters.</div>
+                </div>
+                <div class="mb-4">
+                  <label class="form-label" for="acct-confirm-pw">Confirm New Password</label>
+                  <input class="form-control" id="acct-confirm-pw" name="confirm_password"
+                         type="password" autocomplete="new-password" required minlength="8">
+                </div>
+                <div class="d-flex gap-2">
+                  <button type="submit" class="btn btn-primary" id="account-pw-submit">
+                    <i class="bi bi-check-lg me-1"></i>Update Password
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}

@@ -159,13 +159,14 @@
             <li><h6 class="dropdown-header text-truncate" style="max-width:200px;">{{ current_user.username }}</h6></li>
             {% if current_user.is_admin %}
             <li>
-              <a class="dropdown-item" href="{{ url_for('admin_users') }}">
+              <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#userMgmtModal"
+                 onclick="userMgmtLoadList()">
                 <i class="bi bi-people me-2"></i>Manage Users
               </a>
             </li>
             {% else %}
             <li>
-              <a class="dropdown-item" href="{{ url_for('account') }}">
+              <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#accountModal">
                 <i class="bi bi-key me-2"></i>My Account
               </a>
             </li>
@@ -541,6 +542,10 @@
   {% include 'modals/settings_offcanvas.html' %}
   {% include 'modals/insufficient_buffer.html' %}
   {% include 'modals/book_details.html' %}
+  {% if auth_enabled and current_user and current_user.is_admin %}
+  {% include 'modals/user_mgmt_modal.html' %}
+  {% endif %}
+  {% include 'modals/account_modal.html' %}
 
   <script src="static/bootstrap/js/bootstrap.bundle.min.js">import "bootstrap";</script>
   <script src="https://cdn.jsdelivr.net/npm/tom-select@2.4.5/dist/js/tom-select.complete.min.js"></script>
@@ -564,6 +569,250 @@
     </div>
   </div>
 
+<script>
+(function () {
+  function escHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // ── User Management ────────────────────────────────────────────────────────
+
+  window.userMgmtLoadList = async function () {
+    const listView = document.getElementById('userMgmt-list-view');
+    const formView = document.getElementById('userMgmt-form-view');
+    if (!listView) return;
+    listView.classList.remove('d-none');
+    if (formView) formView.classList.add('d-none');
+    const content = document.getElementById('userMgmt-list-content');
+    content.innerHTML = '<div class="text-center py-5"><div class="spinner-border text-secondary" role="status"><span class="visually-hidden">Loading...</span></div></div>';
+    try {
+      const res = await fetch('/admin/users', { headers: { Accept: 'application/json' } });
+      if (!res.ok) throw new Error(res.status);
+      const users = await res.json();
+      renderUserMgmtTable(users, content);
+    } catch (e) {
+      content.innerHTML = '<div class="alert alert-danger">Failed to load users.</div>';
+    }
+  };
+
+  function renderUserMgmtTable(users, container) {
+    if (!users.length) {
+      container.innerHTML = '<div class="alert alert-info">No user accounts yet. <button class="btn btn-link p-0 align-baseline" onclick="userMgmtShowForm(null)">Create one.</button></div>';
+      return;
+    }
+    const perm = v => v
+      ? '<i class="bi bi-check-circle-fill text-success"></i>'
+      : '<i class="bi bi-dash-circle text-secondary opacity-50"></i>';
+    const rows = users.map(u => `
+      <tr>
+        <td class="align-middle fw-semibold"><i class="bi bi-person-circle me-2 text-secondary"></i>${escHtml(u.username)}</td>
+        <td class="text-center align-middle">${perm(u.can_search)}</td>
+        <td class="text-center align-middle">${perm(u.can_download)}</td>
+        <td class="text-center align-middle">${perm(u.can_settings)}</td>
+        <td class="text-end align-middle">
+          <button class="btn btn-sm btn-outline-secondary me-1" onclick="userMgmtShowForm(${u.id})">
+            <i class="bi bi-pencil"></i>
+          </button>
+          <button class="btn btn-sm btn-outline-danger" onclick="userMgmtDelete(${u.id},'${escHtml(u.username)}')">
+            <i class="bi bi-trash"></i>
+          </button>
+        </td>
+      </tr>`).join('');
+    container.innerHTML = `
+      <div class="card shadow-sm">
+        <div class="table-responsive">
+          <table class="table table-hover mb-0">
+            <thead class="border-bottom">
+              <tr>
+                <th>Username</th>
+                <th class="text-center">Search</th>
+                <th class="text-center">Download</th>
+                <th class="text-center">Settings</th>
+                <th class="text-end">Actions</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  window.userMgmtShowForm = async function (userId) {
+    const listView = document.getElementById('userMgmt-list-view');
+    const formView = document.getElementById('userMgmt-form-view');
+    const errEl   = document.getElementById('userMgmt-form-error');
+    listView.classList.add('d-none');
+    formView.classList.remove('d-none');
+    errEl.classList.add('d-none');
+
+    const isEdit = userId != null;
+    document.getElementById('userMgmt-form-title').innerHTML =
+      `<i class="bi bi-person-${isEdit ? 'gear' : 'plus'} me-2 text-primary"></i>${isEdit ? 'Edit User' : 'New User'}`;
+    document.getElementById('userMgmt-form-subtitle').textContent =
+      isEdit ? 'Update permissions or reset password' : 'Create a new account with specific permissions';
+    document.getElementById('userMgmt-form').dataset.userId = userId ?? '';
+
+    let user = null;
+    const formBody = document.getElementById('userMgmt-form-body');
+    if (isEdit) {
+      formBody.innerHTML = '<div class="text-center py-3"><div class="spinner-border spinner-border-sm text-secondary" role="status"></div></div>';
+      try {
+        const res = await fetch(`/admin/users/${userId}`, { headers: { Accept: 'application/json' } });
+        if (!res.ok) throw new Error(res.status);
+        user = await res.json();
+      } catch (e) {
+        formBody.innerHTML = '<div class="alert alert-danger">Failed to load user.</div>';
+        return;
+      }
+    }
+
+    const chk = v => v ? 'checked' : '';
+    formBody.innerHTML = `
+      <div class="mb-3">
+        <label class="form-label" for="uf-username">Username</label>
+        <input class="form-control" id="uf-username" name="username" type="text"
+               value="${user ? escHtml(user.username) : ''}"
+               ${user ? 'readonly' : 'autofocus required'} autocomplete="username">
+        ${user ? '<div class="form-text">Username cannot be changed after creation.</div>' : ''}
+      </div>
+      <div class="mb-4">
+        <label class="form-label" for="uf-password">Password${user ? ' <span class="text-body-secondary fw-normal">(leave blank to keep current)</span>' : ''}</label>
+        <input class="form-control" id="uf-password" name="password" type="password"
+               autocomplete="new-password" ${user ? '' : 'required'} ${user ? 'autofocus' : ''}>
+        ${!user ? '<div class="form-text">Minimum 8 characters recommended.</div>' : ''}
+      </div>
+      <div class="mb-4">
+        <label class="form-label fw-semibold">Permissions</label>
+        <div class="row row-cols-1 row-cols-sm-2 g-2">
+          <div class="col">
+            <div class="form-check card card-body py-2 px-3 h-100">
+              <input class="form-check-input" type="checkbox" name="can_search" id="uf-can_search" ${chk(user ? user.can_search : true)}>
+              <label class="form-check-label" for="uf-can_search">
+                <i class="bi bi-search me-1 text-info"></i><strong>Search</strong>
+                <div class="text-body-secondary small">Browse and search MAM results</div>
+              </label>
+            </div>
+          </div>
+          <div class="col">
+            <div class="form-check card card-body py-2 px-3 h-100">
+              <input class="form-check-input" type="checkbox" name="can_download" id="uf-can_download" ${chk(user ? user.can_download : true)}>
+              <label class="form-check-label" for="uf-can_download">
+                <i class="bi bi-download me-1 text-success"></i><strong>Download</strong>
+                <div class="text-body-secondary small">Add torrents to the torrent client</div>
+              </label>
+            </div>
+          </div>
+          <div class="col">
+            <div class="form-check card card-body py-2 px-3 h-100">
+              <input class="form-check-input" type="checkbox" name="can_settings" id="uf-can_settings" ${chk(user ? user.can_settings : false)}>
+              <label class="form-check-label" for="uf-can_settings">
+                <i class="bi bi-gear me-1 text-warning"></i><strong>Settings</strong>
+                <div class="text-body-secondary small">View and change app configuration</div>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="d-flex gap-2">
+        <button type="button" class="btn btn-primary" onclick="userMgmtSubmitForm()">
+          <i class="bi bi-check-lg me-1"></i>${user ? 'Save Changes' : 'Create User'}
+        </button>
+        <button type="button" class="btn btn-outline-secondary" onclick="userMgmtShowList()">Cancel</button>
+      </div>`;
+  };
+
+  window.userMgmtShowList = function () {
+    document.getElementById('userMgmt-list-view').classList.remove('d-none');
+    document.getElementById('userMgmt-form-view').classList.add('d-none');
+  };
+
+  window.userMgmtSubmitForm = async function () {
+    const form   = document.getElementById('userMgmt-form');
+    const userId = form.dataset.userId;
+    const isEdit = userId !== '';
+    const errEl  = document.getElementById('userMgmt-form-error');
+    errEl.classList.add('d-none');
+
+    const body = new URLSearchParams();
+    if (!isEdit) body.set('username', document.getElementById('uf-username').value.trim());
+    const pw = document.getElementById('uf-password').value;
+    if (pw) body.set('password', pw);
+    if (document.getElementById('uf-can_search').checked)   body.set('can_search', 'on');
+    if (document.getElementById('uf-can_download').checked) body.set('can_download', 'on');
+    if (document.getElementById('uf-can_settings').checked) body.set('can_settings', 'on');
+
+    try {
+      const res = await fetch(isEdit ? `/admin/users/${userId}` : '/admin/users/new', {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        userMgmtLoadList();
+      } else {
+        errEl.textContent = data.error || 'An error occurred.';
+        errEl.classList.remove('d-none');
+      }
+    } catch (e) {
+      errEl.textContent = 'Request failed. Please try again.';
+      errEl.classList.remove('d-none');
+    }
+  };
+
+  window.userMgmtDelete = async function (userId, username) {
+    if (!confirm(`Delete user "${username}"?`)) return;
+    try {
+      const res = await fetch(`/admin/users/${userId}/delete`, {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+      });
+      const data = await res.json();
+      if (data.ok) userMgmtLoadList();
+    } catch (e) {
+      alert('Failed to delete user.');
+    }
+  };
+
+  // ── Account ────────────────────────────────────────────────────────────────
+
+  window.accountSubmitPassword = async function (event) {
+    event.preventDefault();
+    const errEl     = document.getElementById('account-pw-error');
+    const successEl = document.getElementById('account-pw-success');
+    const submitBtn = document.getElementById('account-pw-submit');
+    errEl.classList.add('d-none');
+    successEl.classList.add('d-none');
+    submitBtn.disabled = true;
+
+    const form = document.getElementById('account-pw-form');
+    const body = new URLSearchParams(new FormData(form));
+    try {
+      const res = await fetch('/account', {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        form.reset();
+        successEl.textContent = 'Password updated successfully.';
+        successEl.classList.remove('d-none');
+      } else {
+        errEl.textContent = data.error || 'An error occurred.';
+        errEl.classList.remove('d-none');
+      }
+    } catch (e) {
+      errEl.textContent = 'Request failed. Please try again.';
+      errEl.classList.remove('d-none');
+    } finally {
+      submitBtn.disabled = false;
+    }
+  };
+}());
+</script>
 </body>
 
 </html>
