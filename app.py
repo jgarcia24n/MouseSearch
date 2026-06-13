@@ -28,6 +28,7 @@ from urllib.parse import parse_qsl, unquote, urlparse
 from werkzeug.security import generate_password_hash, check_password_hash
 
 import re
+from openapi_spec import OPENAPI_SPEC
 from pathlib import Path
 
 import logging # for hypercorn logging
@@ -875,7 +876,7 @@ async def _require_auth():
     if not AUTH_PASSWORD:
         g.current_user = _admin_user_dict()
         return
-    public_paths = ('/login', '/logout')
+    public_paths = ('/login', '/logout', '/api/docs', '/api/openapi.json')
     if request.path in public_paths or request.path.startswith('/static/'):
         return
     # HTTP Basic Auth (API/curl clients) — only the env admin account
@@ -5593,6 +5594,8 @@ async def admin_users():
     if err:
         return err
     users = await asyncio.to_thread(_db_get_all_users)
+    if request.accept_mimetypes.best_match(['text/html', 'application/json']) == 'application/json':
+        return jsonify(users)
     return await render_template('admin/users.html', users=users)
 
 
@@ -6525,6 +6528,44 @@ async def check_for_unorganized_torrents():
                 failed_count=failed,
                 error=last_error,
             )
+
+
+@app.route('/api/openapi.json')
+async def openapi_spec_endpoint():
+    return jsonify(OPENAPI_SPEC)
+
+
+@app.route('/api/docs')
+async def api_docs():
+    html_page = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MouseSearch API Docs</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+  <style>
+    body { margin: 0; }
+    .topbar { display: none; }
+  </style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    SwaggerUIBundle({
+      url: "/api/openapi.json",
+      dom_id: "#swagger-ui",
+      presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
+      layout: "BaseLayout",
+      deepLinking: true,
+      persistAuthorization: true,
+      tryItOutEnabled: true,
+    });
+  </script>
+</body>
+</html>"""
+    return html_page, 200, {'Content-Type': 'text/html'}
 
 
 if __name__ == "__main__":
