@@ -24,6 +24,7 @@ COPY version.txt ./version.txt
 
 # remove this if becomes obsolete
 COPY hashing.py ./
+COPY openapi_spec.py ./
 
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
